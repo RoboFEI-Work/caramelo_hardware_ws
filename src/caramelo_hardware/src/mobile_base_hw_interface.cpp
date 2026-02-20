@@ -8,9 +8,21 @@
 namespace mobile_base_hardware {
 
     namespace {
-        constexpr std::array<int, 4> kDefaultPwmPins{18, 23, 24, 25};
-        constexpr std::array<int, 4> kDefaultEncAPins{5, 12, 16, 20};
-        constexpr std::array<int, 4> kDefaultEncBPins{6, 13, 19, 21};
+        constexpr int kPwmFrontLeft = 18;
+        constexpr int kEncAFrontLeft = 5;
+        constexpr int kEncBFrontLeft = 6;
+
+        constexpr int kPwmFrontRight = 23;
+        constexpr int kEncAFrontRight = 12;
+        constexpr int kEncBFrontRight = 13;
+
+        constexpr int kPwmBackLeft = 24;
+        constexpr int kEncABackLeft = 16;
+        constexpr int kEncBBackLeft = 19;
+
+        constexpr int kPwmBackRight = 25;
+        constexpr int kEncABackRight = 20;
+        constexpr int kEncBBackRight = 21;
     } // namespace
 
     // Esse seria o construtor da Classe.
@@ -45,29 +57,24 @@ namespace mobile_base_hardware {
                 joint_names_.push_back(joint.name);
 
                 MaxonMotorConfig cfg;
-                if (i < kDefaultPwmPins.size()) {
-                    cfg.pwm_gpio = kDefaultPwmPins[i];
-                    cfg.enc_a_gpio = kDefaultEncAPins[i];
-                    cfg.enc_b_gpio = kDefaultEncBPins[i];
-                }
-
-                if (joint.parameters.count("pwm_gpio")) {
-                    cfg.pwm_gpio = std::stoi(joint.parameters.at("pwm_gpio"));
-                }
-                if (joint.parameters.count("dir_gpio")) {
-                    cfg.dir_gpio = std::stoi(joint.parameters.at("dir_gpio"));
-                }
-                if (joint.parameters.count("enc_a_gpio")) {
-                    cfg.enc_a_gpio = std::stoi(joint.parameters.at("enc_a_gpio"));
-                }
-                if (joint.parameters.count("enc_b_gpio")) {
-                    cfg.enc_b_gpio = std::stoi(joint.parameters.at("enc_b_gpio"));
-                }
-                if (joint.parameters.count("command_sign")) {
-                    cfg.command_sign = std::stod(joint.parameters.at("command_sign"));
-                }
-                if (joint.parameters.count("feedback_sign")) {
-                    cfg.feedback_sign = std::stod(joint.parameters.at("feedback_sign"));
+                if (joint.name == "front_left_wheel_joint") {
+                    cfg.pwm_gpio = kPwmFrontLeft;
+                    cfg.enc_a_gpio = kEncAFrontLeft;
+                    cfg.enc_b_gpio = kEncBFrontLeft;
+                    cfg.command_sign = -1.0;
+                } else if (joint.name == "front_right_wheel_joint") {
+                    cfg.pwm_gpio = kPwmFrontRight;
+                    cfg.enc_a_gpio = kEncAFrontRight;
+                    cfg.enc_b_gpio = kEncBFrontRight;
+                } else if (joint.name == "back_left_wheel_joint") {
+                    cfg.pwm_gpio = kPwmBackLeft;
+                    cfg.enc_a_gpio = kEncABackLeft;
+                    cfg.enc_b_gpio = kEncBBackLeft;
+                    cfg.command_sign = -1.0;
+                } else if (joint.name == "back_right_wheel_joint") {
+                    cfg.pwm_gpio = kPwmBackRight;
+                    cfg.enc_a_gpio = kEncABackRight;
+                    cfg.enc_b_gpio = kEncBBackRight;
                 }
 
                 if (cfg.pwm_gpio < 0 || cfg.enc_a_gpio < 0 || cfg.enc_b_gpio < 0) {
@@ -151,8 +158,6 @@ namespace mobile_base_hardware {
                 return hardware_interface::return_type::ERROR;
             }
 
-            driver_->update_feedback(period.seconds());
-
             for (std::size_t i = 0; i < joint_names_.size(); ++i) {
                 double position_unused = 0.0;
                 double velocity = 0.0;
@@ -162,7 +167,7 @@ namespace mobile_base_hardware {
 
                 set_state(joint_names_[i] + "/velocity", velocity);
                 // Para calcular a posição, basta integrar a velocidade ao longo do tempo.
-                set_state(joint_names_[i] + "/position",get_state(joint_names_[i] + "/position") + velocity * period.seconds());
+                set_state(joint_names_[i] + "/position", get_state(joint_names_[i] + "/position") + velocity * period.seconds());
             }
 
             return hardware_interface::return_type::OK;
@@ -182,8 +187,6 @@ namespace mobile_base_hardware {
                 driver_->set_command_velocity(
                     i, get_command(joint_names_[i] + "/velocity"));
             }
-
-            driver_->apply_pwm();
 
             return hardware_interface::return_type::OK;
         }
