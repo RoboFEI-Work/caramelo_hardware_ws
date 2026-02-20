@@ -29,7 +29,7 @@ namespace mobile_base_hardware {
 
             // System Interface overrides
             hardware_interface::CallbackReturn
-                on_init(const hardware_interface::HardwareInfo & info) override;
+                on_init(const hardware_interface::HardwareComponentInterfaceParams & params) override;
 
             // Leitura de qualquer sensor ou estado do hardware. Exemplo: posição, velocidade, corrente, etc. (manda para o controller manager)
             hardware_interface::return_type

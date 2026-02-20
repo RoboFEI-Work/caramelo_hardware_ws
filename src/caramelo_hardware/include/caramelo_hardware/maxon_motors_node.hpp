@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
@@ -27,8 +28,11 @@ struct MaxonDriverConfig
 {
   std::string pigpio_host;
   std::string pigpio_port;
-  int pwm_frequency_hz = 500;
-  int pwm_range = 255;
+  static constexpr int kPwmFrequencyHz = 500;
+  static constexpr int kPwmRange = 255;
+  static constexpr int kPwmMinDuty = 0;
+  static constexpr int kPwmMaxDuty = 255;
+  static constexpr int kPwmNeutralDuty = 128;
   int encoder_glitch_filter_us = 1;
   double encoder_counts_per_wheel_rev = 28672.0;
   double max_wheel_rad_per_sec = 10.0;
@@ -50,12 +54,74 @@ public:
 
   void set_command_velocity(std::size_t motor_index, double wheel_velocity_rad_s);
   bool get_feedback(std::size_t motor_index, double & position_rad, double & velocity_rad_s) const;
+  void update_feedback(double dt_seconds);
+  void apply_pwm();
 
   void stop_all_motors();
 
 private:
   struct MotorRuntime
   {
+    MotorRuntime() = default;
+
+    MotorRuntime(const MotorRuntime & other)
+    : config(other.config),
+      encoder_count(other.encoder_count.load()),
+      previous_count(other.previous_count),
+      position_rad(other.position_rad),
+      velocity_rad_s(other.velocity_rad_s),
+      command_rad_s(other.command_rad_s),
+      last_state(other.last_state),
+      callback_a(other.callback_a),
+      callback_b(other.callback_b)
+    {
+    }
+
+    MotorRuntime & operator=(const MotorRuntime & other)
+    {
+      if (this != &other) {
+        config = other.config;
+        encoder_count.store(other.encoder_count.load());
+        previous_count = other.previous_count;
+        position_rad = other.position_rad;
+        velocity_rad_s = other.velocity_rad_s;
+        command_rad_s = other.command_rad_s;
+        last_state = other.last_state;
+        callback_a = other.callback_a;
+        callback_b = other.callback_b;
+      }
+      return *this;
+    }
+
+    MotorRuntime(MotorRuntime && other) noexcept
+    : config(std::move(other.config)),
+      encoder_count(other.encoder_count.load()),
+      previous_count(other.previous_count),
+      position_rad(other.position_rad),
+      velocity_rad_s(other.velocity_rad_s),
+      command_rad_s(other.command_rad_s),
+      last_state(other.last_state),
+      callback_a(other.callback_a),
+      callback_b(other.callback_b)
+    {
+    }
+
+    MotorRuntime & operator=(MotorRuntime && other) noexcept
+    {
+      if (this != &other) {
+        config = std::move(other.config);
+        encoder_count.store(other.encoder_count.load());
+        previous_count = other.previous_count;
+        position_rad = other.position_rad;
+        velocity_rad_s = other.velocity_rad_s;
+        command_rad_s = other.command_rad_s;
+        last_state = other.last_state;
+        callback_a = other.callback_a;
+        callback_b = other.callback_b;
+      }
+      return *this;
+    }
+
     MaxonMotorConfig config;
     std::atomic<int64_t> encoder_count{0};
     int64_t previous_count = 0;

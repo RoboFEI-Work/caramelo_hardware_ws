@@ -16,48 +16,24 @@ namespace mobile_base_hardware {
     // Esse seria o construtor da Classe.
     // Ele é necessário para criar o objeto do tipo MobileBaseHWInterface, que é o hardware interface do ros2_control.
     hardware_interface::CallbackReturn MobileBaseHWInterface::on_init
-        (const hardware_interface::HardwareInfo & info)
+        (const hardware_interface::HardwareComponentInterfaceParams & params)
         {
             // Igual para todos os futuros hardwares.
-            if (hardware_interface::SystemInterface::on_init(info) != hardware_interface::CallbackReturn::SUCCESS) {
+            if (hardware_interface::SystemInterface::on_init(params) != hardware_interface::CallbackReturn::SUCCESS) {
                 return hardware_interface::CallbackReturn::ERROR;
             }
 
             // atributo privado para guardar as informações do hardware, que vem do arquivo de configuração (URDF)
             // Inerente do ros2_control
-            info_ = info;
+            info_ = params.hardware_info;
 
             if (info_.joints.empty()) {
                 RCLCPP_ERROR(get_logger(), "Nenhuma junta foi declarada no ros2_control.");
                 return hardware_interface::CallbackReturn::ERROR;
             }
 
-            // Parametros gerais do node/driver (com default seguro)
+            // Parametros gerais do node/driver (fixos no código)
             driver_config_ = MaxonDriverConfig{};
-            if (info_.hardware_parameters.count("pigpio_host")) {
-                driver_config_.pigpio_host = info_.hardware_parameters.at("pigpio_host");
-            }
-            if (info_.hardware_parameters.count("pigpio_port")) {
-                driver_config_.pigpio_port = info_.hardware_parameters.at("pigpio_port");
-            }
-            if (info_.hardware_parameters.count("pwm_frequency_hz")) {
-                driver_config_.pwm_frequency_hz = std::stoi(info_.hardware_parameters.at("pwm_frequency_hz"));
-            }
-            if (info_.hardware_parameters.count("pwm_range")) {
-                driver_config_.pwm_range = std::stoi(info_.hardware_parameters.at("pwm_range"));
-            }
-            if (info_.hardware_parameters.count("encoder_glitch_filter_us")) {
-                driver_config_.encoder_glitch_filter_us = std::stoi(info_.hardware_parameters.at("encoder_glitch_filter_us"));
-            }
-            if (info_.hardware_parameters.count("update_period_ms")) {
-                driver_config_.update_period_ms = std::stoi(info_.hardware_parameters.at("update_period_ms"));
-            }
-            if (info_.hardware_parameters.count("encoder_counts_per_wheel_rev")) {
-                driver_config_.encoder_counts_per_wheel_rev = std::stod(info_.hardware_parameters.at("encoder_counts_per_wheel_rev"));
-            }
-            if (info_.hardware_parameters.count("max_wheel_rad_per_sec")) {
-                driver_config_.max_wheel_rad_per_sec = std::stod(info_.hardware_parameters.at("max_wheel_rad_per_sec"));
-            }
 
             joint_names_.clear();
             motor_configs_.clear();
@@ -175,6 +151,8 @@ namespace mobile_base_hardware {
                 return hardware_interface::return_type::ERROR;
             }
 
+            driver_->update_feedback(period.seconds());
+
             for (std::size_t i = 0; i < joint_names_.size(); ++i) {
                 double position_unused = 0.0;
                 double velocity = 0.0;
@@ -184,31 +162,31 @@ namespace mobile_base_hardware {
 
                 set_state(joint_names_[i] + "/velocity", velocity);
                 // Para calcular a posição, basta integrar a velocidade ao longo do tempo.
-                set_state(
-                    joint_names_[i] + "/position",
-                    get_state(joint_names_[i] + "/position") + velocity * period.seconds());
+                set_state(joint_names_[i] + "/position",get_state(joint_names_[i] + "/position") + velocity * period.seconds());
             }
 
             return hardware_interface::return_type::OK;
         }
 
     hardware_interface::return_type MobileBaseHWInterface::write
-    (const rclcpp::Time & time, const rclcpp::Duration & period)
-    {
-        (void)time;
-        (void)period;
+        (const rclcpp::Time & time, const rclcpp::Duration & period)
+        {
+            (void)time;
+            (void)period;
 
-        if (!driver_ || !driver_->is_initialized()) {
-            return hardware_interface::return_type::ERROR;
+            if (!driver_ || !driver_->is_initialized()) {
+                return hardware_interface::return_type::ERROR;
+            }
+
+            for (std::size_t i = 0; i < joint_names_.size(); ++i) {
+                driver_->set_command_velocity(
+                    i, get_command(joint_names_[i] + "/velocity"));
+            }
+
+            driver_->apply_pwm();
+
+            return hardware_interface::return_type::OK;
         }
-
-        for (std::size_t i = 0; i < joint_names_.size(); ++i) {
-            driver_->set_command_velocity(
-                i, get_command(joint_names_[i] + "/velocity"));
-        }
-
-        return hardware_interface::return_type::OK;
-    }
 
 } // namespace mobile_base_hardware
 

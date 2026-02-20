@@ -9,6 +9,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(hardware_interface REQUIRED)
+find_package(pal_statistics REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(std_msgs REQUIRED)
 
@@ -32,6 +33,7 @@ ament_target_dependencies(
   rclcpp
   rclcpp_lifecycle
   hardware_interface
+  pal_statistics
   pluginlib
   std_msgs
 )
@@ -70,6 +72,7 @@ ament_export_dependencies(
   rclcpp
   rclcpp_lifecycle
   hardware_interface
+  pal_statistics
   pluginlib
   std_msgs
 )

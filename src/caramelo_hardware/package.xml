@@ -12,6 +12,7 @@
   <depend>rclcpp</depend>
   <depend>rclcpp_lifecycle</depend>
   <depend>hardware_interface</depend>
+  <depend>pal_statistics</depend>
   <depend>pluginlib</depend>
   <depend>std_msgs</depend>
 

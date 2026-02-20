@@ -23,6 +23,13 @@ namespace
 {
 constexpr double kTwoPi = 6.28318530717958647692;
 constexpr int kInvalidCallbackId = -1;
+#if defined(PI_EITHER_EDGE)
+constexpr unsigned kEitherEdge = PI_EITHER_EDGE;
+#elif defined(EITHER_EDGE)
+constexpr unsigned kEitherEdge = EITHER_EDGE;
+#else
+constexpr unsigned kEitherEdge = 2U;
+#endif
 
 int clamp_int(int value, int min_v, int max_v)
 {
@@ -58,11 +65,8 @@ bool MaxonMotorsNode::initialize(
   rad_per_count_ = kTwoPi / counts_per_rev;
 
 #if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
-  pi_handle_ = pigpio_start(
-    driver_config_.pigpio_host.empty() ? nullptr : driver_config_.pigpio_host.c_str(),
-    driver_config_.pigpio_port.empty() ? nullptr : driver_config_.pigpio_port.c_str());
+  pi_handle_ = pigpio_start(nullptr, nullptr);
   if (pi_handle_ < 0) {
-    RCLCPP_ERROR(get_logger(), "Failed to connect to pigpiod.");
     return false;
   }
 
@@ -75,48 +79,17 @@ bool MaxonMotorsNode::initialize(
     auto & motor = motors_[i];
     motor.config = motor_configs[i];
 
-    if (motor.config.pwm_gpio < 0 || motor.config.enc_a_gpio < 0 || motor.config.enc_b_gpio < 0) {
-      RCLCPP_ERROR(get_logger(), "Invalid GPIO config for motor %zu.", i);
-      shutdown_hardware();
-      return false;
-    }
-
-    if (set_mode(pi_handle_, motor.config.pwm_gpio, PI_OUTPUT) < 0) {
-      shutdown_hardware();
-      return false;
-    }
-    if (set_PWM_frequency(
-        pi_handle_, motor.config.pwm_gpio, static_cast<unsigned>(driver_config_.pwm_frequency_hz)) < 0)
-    {
-      shutdown_hardware();
-      return false;
-    }
-    if (set_PWM_range(
-        pi_handle_, motor.config.pwm_gpio, static_cast<unsigned>(driver_config_.pwm_range)) < 0)
-    {
-      shutdown_hardware();
-      return false;
-    }
-    if (set_PWM_dutycycle(pi_handle_, motor.config.pwm_gpio, neutral_duty()) < 0) {
-      shutdown_hardware();
-      return false;
-    }
-
-    if (motor.config.dir_gpio >= 0) {
-      set_mode(pi_handle_, motor.config.dir_gpio, PI_OUTPUT);
-      gpio_write(pi_handle_, motor.config.dir_gpio, 0);
-    }
+    set_mode(pi_handle_, motor.config.pwm_gpio, PI_OUTPUT);
+    set_PWM_frequency(
+      pi_handle_, motor.config.pwm_gpio, static_cast<unsigned>(MaxonDriverConfig::kPwmFrequencyHz));
+    set_PWM_range(
+      pi_handle_, motor.config.pwm_gpio, static_cast<unsigned>(MaxonDriverConfig::kPwmRange));
+    set_PWM_dutycycle(pi_handle_, motor.config.pwm_gpio, neutral_duty());
 
     set_mode(pi_handle_, motor.config.enc_a_gpio, PI_INPUT);
     set_mode(pi_handle_, motor.config.enc_b_gpio, PI_INPUT);
     set_pull_up_down(pi_handle_, motor.config.enc_a_gpio, PI_PUD_OFF);
     set_pull_up_down(pi_handle_, motor.config.enc_b_gpio, PI_PUD_OFF);
-    set_glitch_filter(
-      pi_handle_, motor.config.enc_a_gpio,
-      static_cast<unsigned>(std::max(0, driver_config_.encoder_glitch_filter_us)));
-    set_glitch_filter(
-      pi_handle_, motor.config.enc_b_gpio,
-      static_cast<unsigned>(std::max(0, driver_config_.encoder_glitch_filter_us)));
 
     const int a0 = gpio_read(pi_handle_, motor.config.enc_a_gpio);
     const int b0 = gpio_read(pi_handle_, motor.config.enc_b_gpio);
@@ -128,27 +101,19 @@ bool MaxonMotorsNode::initialize(
     motor.callback_a = callback_ex(
       pi_handle_,
       static_cast<unsigned>(motor.config.enc_a_gpio),
-      PI_EITHER_EDGE,
+      kEitherEdge,
       &MaxonMotorsNode::encoder_callback,
       &cb_ctx_a_[i]);
     motor.callback_b = callback_ex(
       pi_handle_,
       static_cast<unsigned>(motor.config.enc_b_gpio),
-      PI_EITHER_EDGE,
+      kEitherEdge,
       &MaxonMotorsNode::encoder_callback,
       &cb_ctx_b_[i]);
 
-    if (motor.callback_a < 0 || motor.callback_b < 0) {
-      shutdown_hardware();
-      return false;
-    }
   }
 
   last_update_time_ = now();
-  // Atualizacao fixa em 10 ms (100 Hz) para leitura de encoder e atualizacao do PWM.
-  update_timer_ = create_wall_timer(
-    std::chrono::milliseconds(10),
-    std::bind(&MaxonMotorsNode::update_cycle, this));
 
   initialized_ = true;
   return true;
@@ -224,9 +189,6 @@ void MaxonMotorsNode::stop_all_motors()
   for (auto & motor : motors_) {
     motor.command_rad_s = 0.0;
     set_PWM_dutycycle(pi_handle_, motor.config.pwm_gpio, neutral_duty());
-    if (motor.config.dir_gpio >= 0) {
-      gpio_write(pi_handle_, motor.config.dir_gpio, 0);
-    }
   }
 #endif
 }
@@ -276,13 +238,35 @@ void MaxonMotorsNode::handle_encoder_edge(std::size_t motor_index)
 void MaxonMotorsNode::update_cycle()
 {
 #if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
+  (void)initialized_;
+  (void)pi_handle_;
+#endif
+}
+
+void MaxonMotorsNode::apply_pwm()
+{
+#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
   if (!initialized_ || pi_handle_ < 0) {
     return;
   }
 
-  const auto now_time = now();
-  const double dt = std::max(1e-6, (now_time - last_update_time_).seconds());
-  last_update_time_ = now_time;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  for (auto & motor : motors_) {
+    const double cmd_signed = motor.command_rad_s * motor.config.command_sign;
+    const int duty = velocity_to_duty(cmd_signed);
+    set_PWM_dutycycle(pi_handle_, motor.config.pwm_gpio, duty);
+  }
+#endif
+}
+
+void MaxonMotorsNode::update_feedback(double dt_seconds)
+{
+#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
+  if (!initialized_ || pi_handle_ < 0) {
+    return;
+  }
+
+  const double dt = std::max(1e-6, dt_seconds);
 
   std::lock_guard<std::mutex> lock(state_mutex_);
   std_msgs::msg::Float64MultiArray msg;
@@ -300,20 +284,9 @@ void MaxonMotorsNode::update_cycle()
     motor.position_rad += delta_rad;
     motor.velocity_rad_s = delta_rad / dt;
     msg.data[i] = motor.velocity_rad_s;
-
-    const double cmd_signed = motor.command_rad_s * motor.config.command_sign;
-    const int duty = velocity_to_duty(cmd_signed);
-    set_PWM_dutycycle(pi_handle_, motor.config.pwm_gpio, duty);
-
-    if (motor.config.dir_gpio >= 0) {
-      const int dir = cmd_signed >= 0.0 ? 1 : 0;
-      // Mantido por compatibilidade de hardware antigo.
-      gpio_write(pi_handle_, motor.config.dir_gpio, dir);
-    }
   }
 
   velocity_pub_->publish(msg);
-  // RCLCPP_INFO(get_logger(), "Encoder/PWM cycle running");
 #endif
 }
 
@@ -321,15 +294,15 @@ int MaxonMotorsNode::velocity_to_duty(double wheel_velocity_rad_s) const
 {
   const double max_rad = std::max(1e-6, driver_config_.max_wheel_rad_per_sec);
   const double norm = std::clamp(wheel_velocity_rad_s / max_rad, -1.0, 1.0);
-  const double center = static_cast<double>(driver_config_.pwm_range) * 0.5;
-  const double half_span = center;
-  const int duty = static_cast<int>(std::lround(center + norm * half_span));
-  return clamp_int(duty, 0, driver_config_.pwm_range);
+  const double half_span = static_cast<double>(MaxonDriverConfig::kPwmRange) * 0.5;
+  const int duty = static_cast<int>(
+    std::lround(MaxonDriverConfig::kPwmNeutralDuty + norm * half_span));
+  return clamp_int(duty, 0, MaxonDriverConfig::kPwmRange);
 }
 
 int MaxonMotorsNode::neutral_duty() const
 {
-  return static_cast<int>(std::lround(static_cast<double>(driver_config_.pwm_range) * 0.5));
+  return clamp_int(MaxonDriverConfig::kPwmNeutralDuty, 0, MaxonDriverConfig::kPwmRange);
 }
 
 }  // namespace mobile_base_hardware

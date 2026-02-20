@@ -5,14 +5,10 @@
         <hardware>
             <!--* Qual o plugin de hardware a ser utilizado? -->
             <!--* Mock components: Somente para simulação -->
-            <plugin>mock_components/GenericSystem</plugin>
+            <!-- <plugin>mock_components/GenericSystem</plugin> -->
 
             <!--* Mobile base hardware interface: Para controle real do robô -->
-            <!-- <plugin>mobile_base_hardware/MobileBaseHWInterface</plugin> -->
-            <!-- <param name=""></param>
-            <param name=""></param>
-            <param name=""></param>
-            <param name=""></param> -->
+            <plugin>mobile_base_hardware/MobileBaseHWInterface</plugin>
         </hardware>
 
         <!-- Criar uma joint tag para cada junta que desejar que seja controlada -->
