@@ -2,9 +2,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
+#include <chrono>
+#include <cstdio>
 #include <fcntl.h>
+#include <poll.h>
 #include <unistd.h>
 
 #if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
@@ -36,6 +40,7 @@ uint32_t bit(int gpio)
 {
 	return (1u << gpio);
 }
+
 }  // namespace
 
 MaxonMotorsNode::MaxonMotorsNode()
@@ -74,13 +79,20 @@ bool MaxonMotorsNode::initialize(
 	motors_.resize(motor_configs.size());
 	cb_ctx_a_.resize(motor_configs.size());
 	cb_ctx_b_.resize(motor_configs.size());
-	counts_.assign(motor_configs.size(), 0);
+	encoder_notify_.clear();
+	encoder_notify_.resize(motor_configs.size());
+	counts_size_ = motor_configs.size();
+	counts_.reset(new std::atomic<int64_t>[counts_size_]);
 	last_counts_.assign(motor_configs.size(), 0);
-	notify_mask_ = 0;
 
 	for (std::size_t i = 0; i < motor_configs.size(); ++i) {
 		auto & motor = motors_[i];
 		motor.config = motor_configs[i];
+
+		if (motor.config.pwm_gpio == 18 || motor.config.pwm_gpio == 24) {
+			motor.config.command_sign = -1.0;
+			motor.config.feedback_sign = -1.0;
+		}
 
 		set_mode(pi_handle_, motor.config.pwm_gpio, PI_OUTPUT);
 		set_PWM_frequency(
@@ -98,61 +110,65 @@ bool MaxonMotorsNode::initialize(
 
 		const int a0 = gpio_read(pi_handle_, motor.config.enc_a_gpio);
 		const int b0 = gpio_read(pi_handle_, motor.config.enc_b_gpio);
-		motor.last_state = ((a0 != 0) << 1) | (b0 != 0);
+		motor.last_state.store(((a0 != 0) << 1) | (b0 != 0));
+		motor.encoder_count.store(0);
 
 		cb_ctx_a_[i] = CallbackContext{this, i};
 		cb_ctx_b_[i] = CallbackContext{this, i};
 
-		notify_mask_ |= bit(motor.config.enc_a_gpio);
-		notify_mask_ |= bit(motor.config.enc_b_gpio);
+		auto & notify = encoder_notify_[i];
+		notify.mask = bit(motor.config.enc_a_gpio) | bit(motor.config.enc_b_gpio);
+		notify.notify_handle = notify_open(pi_handle_);
+		if (notify.notify_handle < 0) {
+			shutdown_hardware();
+			return false;
+		}
+		if (notify_begin(pi_handle_, notify.notify_handle, notify.mask) < 0) {
+			shutdown_hardware();
+			return false;
+		}
+
+		char devname[64];
+		snprintf(devname, sizeof(devname), "/dev/pigpio%d", notify.notify_handle);
+		notify.notify_fd = open(devname, O_RDONLY | O_NONBLOCK);
+		if (notify.notify_fd < 0) {
+			shutdown_hardware();
+			return false;
+		}
+
+		gpioReport_t rep{};
+		ssize_t n = read(notify.notify_fd, &rep, sizeof(rep));
+		if (n == static_cast<ssize_t>(sizeof(rep))) {
+			notify.last_level = rep.level & notify.mask;
+		} else {
+			uint32_t lvl = 0;
+			if (gpio_read(pi_handle_, motor.config.enc_a_gpio)) {
+				lvl |= bit(motor.config.enc_a_gpio);
+			}
+			if (gpio_read(pi_handle_, motor.config.enc_b_gpio)) {
+				lvl |= bit(motor.config.enc_b_gpio);
+			}
+			notify.last_level = lvl & notify.mask;
+		}
 
 		motor.callback_a = kInvalidCallbackId;
 		motor.callback_b = kInvalidCallbackId;
-	}
-
-	notify_handle_ = notify_open(pi_handle_);
-	if (notify_handle_ < 0) {
-		shutdown_hardware();
-		return false;
-	}
-	if (notify_begin(pi_handle_, notify_handle_, notify_mask_) < 0) {
-		shutdown_hardware();
-		return false;
-	}
-
-	char devname[64];
-	snprintf(devname, sizeof(devname), "/dev/pigpio%d", notify_handle_);
-	notify_fd_ = open(devname, O_RDONLY | O_NONBLOCK);
-	if (notify_fd_ < 0) {
-		shutdown_hardware();
-		return false;
-	}
-
-	gpioReport_t rep{};
-	ssize_t n = read(notify_fd_, &rep, sizeof(rep));
-	if (n == static_cast<ssize_t>(sizeof(rep))) {
-		last_level_ = rep.level;
-		last_tick_ = rep.tick;
-	} else {
-		uint32_t lvl = 0;
-		for (std::size_t i = 0; i < motors_.size(); ++i) {
-			if (gpio_read(pi_handle_, motors_[i].config.enc_a_gpio)) {
-				lvl |= bit(motors_[i].config.enc_a_gpio);
-			}
-			if (gpio_read(pi_handle_, motors_[i].config.enc_b_gpio)) {
-				lvl |= bit(motors_[i].config.enc_b_gpio);
-			}
-		}
-		last_level_ = lvl;
-		last_tick_ = get_current_tick(pi_handle_);
+		counts_[i].store(0);
 	}
 
 	last_update_time_ = now();
-	update_timer_ = create_wall_timer(
-		std::chrono::milliseconds(100),
-		std::bind(&MaxonMotorsNode::update_cycle, this));
-
 	initialized_ = true;
+
+	encoder_threads_running_.store(true);
+	encoder_threads_.clear();
+	encoder_threads_.reserve(motors_.size());
+	for (std::size_t i = 0; i < motors_.size(); ++i) {
+		encoder_threads_.emplace_back(&MaxonMotorsNode::encoder_read_loop, this, i);
+	}
+
+	control_thread_running_.store(true);
+	control_thread_ = std::thread(&MaxonMotorsNode::control_loop, this);
+
 	return true;
 #else
 	(void)motor_configs;
@@ -163,29 +179,36 @@ bool MaxonMotorsNode::initialize(
 void MaxonMotorsNode::shutdown_hardware()
 {
 #if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
-	update_timer_.reset();
+	control_thread_running_.store(false);
+	if (control_thread_.joinable()) {
+		control_thread_.join();
+	}
+
+	encoder_threads_running_.store(false);
+	for (auto & notify : encoder_notify_) {
+		if (notify.notify_fd >= 0) {
+			close(notify.notify_fd);
+			notify.notify_fd = -1;
+		}
+	}
+
+	for (auto & thread : encoder_threads_) {
+		if (thread.joinable()) {
+			thread.join();
+		}
+	}
+	encoder_threads_.clear();
+
 	if (pi_handle_ >= 0) {
 		stop_all_motors();
-		if (notify_handle_ >= 0) {
-			notify_begin(pi_handle_, notify_handle_, 0);
-		}
-		for (auto & motor : motors_) {
-			if (motor.callback_a >= 0) {
-				callback_cancel(motor.callback_a);
-				motor.callback_a = kInvalidCallbackId;
+		for (auto & notify : encoder_notify_) {
+			if (notify.notify_handle >= 0) {
+				notify_begin(pi_handle_, notify.notify_handle, 0);
 			}
-			if (motor.callback_b >= 0) {
-				callback_cancel(motor.callback_b);
-				motor.callback_b = kInvalidCallbackId;
+			if (notify.notify_handle >= 0) {
+				notify_close(pi_handle_, notify.notify_handle);
+				notify.notify_handle = -1;
 			}
-		}
-		if (notify_fd_ >= 0) {
-			close(notify_fd_);
-			notify_fd_ = -1;
-		}
-		if (notify_handle_ >= 0) {
-			notify_close(pi_handle_, notify_handle_);
-			notify_handle_ = -1;
 		}
 		pigpio_stop(pi_handle_);
 		pi_handle_ = -1;
@@ -193,7 +216,9 @@ void MaxonMotorsNode::shutdown_hardware()
 	motors_.clear();
 	cb_ctx_a_.clear();
 	cb_ctx_b_.clear();
-	counts_.clear();
+	encoder_notify_.clear();
+	counts_.reset();
+	counts_size_ = 0;
 	last_counts_.clear();
 #endif
 	initialized_ = false;
@@ -209,8 +234,16 @@ void MaxonMotorsNode::set_command_velocity(std::size_t motor_index, double wheel
 	if (motor_index >= motors_.size()) {
 		return;
 	}
-	std::lock_guard<std::mutex> lock(state_mutex_);
-	motors_[motor_index].command_rad_s = wheel_velocity_rad_s;
+	motors_[motor_index].command_rad_s.store(wheel_velocity_rad_s);
+}
+
+bool MaxonMotorsNode::get_velocity(std::size_t motor_index, double & velocity_rad_s) const
+{
+	if (motor_index >= motors_.size()) {
+		return false;
+	}
+	velocity_rad_s = motors_[motor_index].velocity_rad_s.load();
+	return true;
 }
 
 bool MaxonMotorsNode::get_feedback(
@@ -219,9 +252,8 @@ bool MaxonMotorsNode::get_feedback(
 	if (motor_index >= motors_.size()) {
 		return false;
 	}
-	std::lock_guard<std::mutex> lock(state_mutex_);
-	position_rad = motors_[motor_index].position_rad;
-	velocity_rad_s = motors_[motor_index].velocity_rad_s;
+	position_rad = motors_[motor_index].position_rad.load();
+	velocity_rad_s = motors_[motor_index].velocity_rad_s.load();
 	return true;
 }
 
@@ -232,9 +264,8 @@ void MaxonMotorsNode::stop_all_motors()
 		return;
 	}
 
-	std::lock_guard<std::mutex> lock(state_mutex_);
 	for (auto & motor : motors_) {
-		motor.command_rad_s = 0.0;
+		motor.command_rad_s.store(0.0);
 		set_PWM_dutycycle(pi_handle_, motor.config.pwm_gpio, neutral_duty());
 	}
 #endif
@@ -264,8 +295,19 @@ void MaxonMotorsNode::handle_encoder_edge(std::size_t motor_index)
 		return;
 	}
 
-	const int delta = (a == b) ? 1 : -1;
-	motor.encoder_count.fetch_add(delta, std::memory_order_relaxed);
+	const int new_state = ((a != 0) << 1) | (b != 0);
+	const int prev_state = motor.last_state.exchange(new_state);
+	const int idx = (prev_state << 2) | new_state;
+	static constexpr int8_t kQuadTable[16] = {
+		0, -1, 1, 0,
+		1, 0, 0, -1,
+		-1, 0, 0, 1,
+		0, 1, -1, 0
+	};
+	const int delta = kQuadTable[idx];
+	if (delta != 0) {
+		motor.encoder_count.fetch_add(delta, std::memory_order_relaxed);
+	}
 #else
 	(void)motor_index;
 #endif
@@ -282,6 +324,79 @@ void MaxonMotorsNode::apply_pwm()
 	update_cycle();
 }
 
+void MaxonMotorsNode::encoder_read_loop(std::size_t motor_index)
+{
+#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
+	if (motor_index >= motors_.size() || motor_index >= encoder_notify_.size()) {
+		return;
+	}
+
+	auto & motor = motors_[motor_index];
+	auto & notify = encoder_notify_[motor_index];
+	const uint32_t a_bit = bit(motor.config.enc_a_gpio);
+	const uint32_t b_bit = bit(motor.config.enc_b_gpio);
+	std::array<gpioReport_t, 32> reports{};
+
+	while (encoder_threads_running_.load()) {
+		if (notify.notify_fd < 0) {
+			break;
+		}
+
+		pollfd pfd;
+		pfd.fd = notify.notify_fd;
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+
+		const int poll_ret = poll(&pfd, 1, -1);
+		if (poll_ret <= 0) {
+			continue;
+		}
+
+		if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+			break;
+		}
+
+		if ((pfd.revents & POLLIN) == 0) {
+			continue;
+		}
+
+		ssize_t nr = read(notify.notify_fd, reports.data(), reports.size() * sizeof(gpioReport_t));
+		if (nr <= 0) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+				continue;
+			}
+			break;
+		}
+
+		const std::size_t report_count = static_cast<std::size_t>(nr) / sizeof(gpioReport_t);
+		for (std::size_t report_index = 0; report_index < report_count; ++report_index) {
+			const uint32_t level = reports[report_index].level;
+			const uint32_t changed = (notify.last_level ^ level) & notify.mask;
+
+			if (changed & a_bit) {
+				const bool a_now = (level & a_bit) != 0;
+				if (a_now) {
+					const bool b_now = (level & b_bit) != 0;
+					counts_[motor_index].fetch_add((b_now ? -1 : +1), std::memory_order_relaxed);
+				}
+			}
+
+			notify.last_level = level & notify.mask;
+		}
+	}
+#endif
+}
+
+void MaxonMotorsNode::control_loop()
+{
+#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
+	while (control_thread_running_.load()) {
+		update_cycle();
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+#endif
+}
+
 void MaxonMotorsNode::update_cycle()
 {
 #if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
@@ -292,53 +407,24 @@ void MaxonMotorsNode::update_cycle()
 	const auto now_time = now();
 	const double dt = std::max(1e-6, (now_time - last_update_time_).seconds());
 	last_update_time_ = now_time;
-
-	if (notify_fd_ >= 0) {
-		while (true) {
-			gpioReport_t r;
-			ssize_t nr = read(notify_fd_, &r, sizeof(r));
-			if (nr == static_cast<ssize_t>(sizeof(r))) {
-				uint32_t level = r.level;
-				uint32_t changed = (last_level_ ^ level) & notify_mask_;
-
-				for (std::size_t i = 0; i < motors_.size(); ++i) {
-					uint32_t aBit = bit(motors_[i].config.enc_a_gpio);
-					if (changed & aBit) {
-						bool aNow = (level & aBit);
-						if (aNow) {
-							bool bNow = (level & bit(motors_[i].config.enc_b_gpio));
-							counts_[i] += (bNow ? -1 : +1);
-						}
-					}
-				}
-
-				last_level_ = level;
-				last_tick_ = r.tick;
-			} else {
-				break;
-			}
-		}
-		last_tick_ = get_current_tick(pi_handle_);
-	}
-
-	std::lock_guard<std::mutex> lock(state_mutex_);
 	std_msgs::msg::Float64MultiArray msg;
 	msg.data.resize(motors_.size(), 0.0);
 
 	for (std::size_t i = 0; i < motors_.size(); ++i) {
 		auto & motor = motors_[i];
-
-		const int64_t count_now = counts_[i];
+		const int64_t count_now = counts_[i].load(std::memory_order_relaxed);
 		const int64_t delta_count = count_now - last_counts_[i];
 		last_counts_[i] = count_now;
 
 		const double delta_rad =
 			static_cast<double>(delta_count) * rad_per_count_ * motor.config.feedback_sign;
-		motor.position_rad += delta_rad;
-		motor.velocity_rad_s = delta_rad / dt;
-		msg.data[i] = motor.velocity_rad_s;
+		const double new_position = motor.position_rad.load() + delta_rad;
+		const double new_velocity = delta_rad / dt;
+		motor.position_rad.store(new_position);
+		motor.velocity_rad_s.store(new_velocity);
+		msg.data[i] = new_velocity;
 
-		const double cmd_signed = motor.command_rad_s * motor.config.command_sign;
+		const double cmd_signed = motor.command_rad_s.load() * motor.config.command_sign;
 		const int duty = velocity_to_duty(cmd_signed);
 		set_PWM_dutycycle(pi_handle_, motor.config.pwm_gpio, duty);
 	}
@@ -351,15 +437,18 @@ int MaxonMotorsNode::velocity_to_duty(double wheel_velocity_rad_s) const
 {
 	const double max_rad = std::max(1e-6, driver_config_.max_wheel_rad_per_sec);
 	const double norm = std::clamp(wheel_velocity_rad_s / max_rad, -1.0, 1.0);
-	const double half_span = static_cast<double>(MaxonDriverConfig::kPwmRange) * 0.5;
-	const int duty = static_cast<int>(
-		std::lround(MaxonDriverConfig::kPwmNeutralDuty + norm * half_span));
-	return clamp_int(duty, 0, MaxonDriverConfig::kPwmRange);
+	const double pwm_percent = 50.0 + (norm * 50.0);
+	const double duty_f = (pwm_percent * static_cast<double>(MaxonDriverConfig::kPwmRange)) / 100.0;
+	const int duty = static_cast<int>(std::lround(duty_f));
+	return clamp_int(duty, MaxonDriverConfig::kPwmDutyMin, MaxonDriverConfig::kPwmDutyMax);
 }
 
 int MaxonMotorsNode::neutral_duty() const
 {
-	return clamp_int(MaxonDriverConfig::kPwmNeutralDuty, 0, MaxonDriverConfig::kPwmRange);
+	return clamp_int(
+		MaxonDriverConfig::kPwmNeutralDuty,
+		MaxonDriverConfig::kPwmDutyMin,
+		MaxonDriverConfig::kPwmDutyMax);
 }
 
 }  // namespace mobile_base_hardware
