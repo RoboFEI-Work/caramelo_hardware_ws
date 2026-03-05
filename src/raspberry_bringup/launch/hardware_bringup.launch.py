@@ -1,13 +1,16 @@
 from ament_index_python.packages import get_package_share_path
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.parameter_descriptions import ParameterValue
-from launch.substitutions import Command
 from launch_ros.actions import Node
 import os
 
 def generate_launch_description():
     robot_description_path = get_package_share_path('caramelo_description')
     robot_bringup_path = get_package_share_path('raspberry_bringup')
+    use_rviz = LaunchConfiguration('rviz')
     
     urdf_path = os.path.join(robot_description_path, 'urdf', 'robot.urdf.xacro')
     rviz_config_path = os.path.join(robot_description_path, 'rviz', 'urdf_config.rviz') # para a raspberry o rviz nao funciona, entao nao tem problema deixar o caminho aqui, mas ele nao vai ser usado
@@ -24,6 +27,10 @@ def generate_launch_description():
         package="controller_manager",
         executable="ros2_control_node",
         parameters=[robot_controllers],
+        remappings=[
+            ('/mecanum_controller/tf_odometry', '/tf'),
+            ('/mecanum_controller/odometry', '/odom'),
+        ],
     )    
     
     joint_state_broadcaster_spawner = Node(
@@ -43,9 +50,15 @@ def generate_launch_description():
         executable="rviz2",
         name="rviz2",
         arguments=["-d", rviz_config_path],
+        condition=IfCondition(use_rviz),
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'rviz',
+            default_value='false',
+            description='Inicia o RViz se true',
+        ),
         robot_state_publisher_node,
         control_node,
         joint_state_broadcaster_spawner,
