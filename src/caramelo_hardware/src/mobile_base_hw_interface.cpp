@@ -61,7 +61,6 @@ namespace mobile_base_hardware {
                     cfg.pwm_gpio = kPwmFrontLeft;
                     cfg.enc_a_gpio = kEncAFrontLeft;
                     cfg.enc_b_gpio = kEncBFrontLeft;
-                    cfg.command_sign = -1.0;
                 } else if (joint.name == "front_right_wheel_joint") {
                     cfg.pwm_gpio = kPwmFrontRight;
                     cfg.enc_a_gpio = kEncAFrontRight;
@@ -70,7 +69,6 @@ namespace mobile_base_hardware {
                     cfg.pwm_gpio = kPwmBackLeft;
                     cfg.enc_a_gpio = kEncABackLeft;
                     cfg.enc_b_gpio = kEncBBackLeft;
-                    cfg.command_sign = -1.0;
                 } else if (joint.name == "back_right_wheel_joint") {
                     cfg.pwm_gpio = kPwmBackRight;
                     cfg.enc_a_gpio = kEncABackRight;
@@ -84,6 +82,11 @@ namespace mobile_base_hardware {
 
                 motor_configs_.push_back(cfg);
             }
+
+            front_left_motor_id_ = 0;
+            front_right_motor_id_ = 1;
+            back_left_motor_id_ = 2;
+            back_right_motor_id_ = 3;
 
             //obrigatório retornar SUCCESS ou ERROR, para o ros2_control saber se a inicialização foi bem sucedida ou não.
             return hardware_interface::CallbackReturn::SUCCESS;
@@ -114,16 +117,15 @@ namespace mobile_base_hardware {
         {
             (void)previous_state;
 
-            if (!driver_ || !driver_->is_initialized()) {
-                RCLCPP_ERROR(get_logger(), "Driver nao inicializado.");
-                return hardware_interface::CallbackReturn::ERROR;
-            }
+            set_state("front_left_wheel_joint/velocity", 0.0);
+            set_state("front_right_wheel_joint/velocity", 0.0);
+            set_state("back_left_wheel_joint/velocity", 0.0);
+            set_state("back_right_wheel_joint/velocity", 0.0);
 
-            for (const auto & joint_name : joint_names_) {
-                set_state(joint_name + "/position", 0.0);
-                set_state(joint_name + "/velocity", 0.0);
-                set_command(joint_name + "/velocity", 0.0);
-            }
+            set_state("front_left_wheel_joint/position", 0.0);
+            set_state("front_right_wheel_joint/position", 0.0);
+            set_state("back_left_wheel_joint/position", 0.0);
+            set_state("back_right_wheel_joint/position", 0.0);
 
             driver_->stop_all_motors();
             return hardware_interface::CallbackReturn::SUCCESS;
@@ -154,21 +156,37 @@ namespace mobile_base_hardware {
         {
             (void)time;
 
-            if (!driver_ || !driver_->is_initialized()) {
-                return hardware_interface::return_type::ERROR;
-            }
+            double front_left_velocity = 0.0;
+            driver_->get_velocity(front_left_motor_id_, front_left_velocity);
 
-            for (std::size_t i = 0; i < joint_names_.size(); ++i) {
-                double position_unused = 0.0;
-                double velocity = 0.0;
-                if (!driver_->get_feedback(i, position_unused, velocity)) {
-                    return hardware_interface::return_type::ERROR;
-                }
+            double front_right_velocity = 0.0;
+            driver_->get_velocity(front_right_motor_id_, front_right_velocity);
 
-                set_state(joint_names_[i] + "/velocity", velocity);
-                // Para calcular a posição, basta integrar a velocidade ao longo do tempo.
-                set_state(joint_names_[i] + "/position", get_state(joint_names_[i] + "/position") + velocity * period.seconds());
-            }
+            double back_left_velocity = 0.0;
+            driver_->get_velocity(back_left_motor_id_, back_left_velocity);
+
+            double back_right_velocity = 0.0;
+            driver_->get_velocity(back_right_motor_id_, back_right_velocity);
+
+            if (std::abs(front_left_velocity) < 0.03) { front_left_velocity = 0.0; }
+            if (std::abs(front_right_velocity) < 0.03) { front_right_velocity = 0.0; }
+            if (std::abs(back_left_velocity) < 0.03) { back_left_velocity = 0.0; }
+            if (std::abs(back_right_velocity) < 0.03) { back_right_velocity = 0.0; }
+
+            set_state("front_left_wheel_joint/velocity", front_left_velocity);
+            set_state("front_right_wheel_joint/velocity", front_right_velocity);
+            set_state("back_left_wheel_joint/velocity", back_left_velocity);
+            set_state("back_right_wheel_joint/velocity", back_right_velocity);
+
+            // Para calcular a posição, basta integrar a velocidade ao longo do tempo.
+            set_state("front_left_wheel_joint/position", get_state("front_left_wheel_joint/position") + front_left_velocity * period.seconds());
+            set_state("front_right_wheel_joint/position", get_state("front_right_wheel_joint/position") + front_right_velocity * period.seconds());
+            set_state("back_left_wheel_joint/position", get_state("back_left_wheel_joint/position") + back_left_velocity * period.seconds());
+            set_state("back_right_wheel_joint/position", get_state("back_right_wheel_joint/position") + back_right_velocity * period.seconds());
+
+            // RCLCPP_INFO(get_logger(),
+            //             "front_left vel: %lf, front_right vel: %lf, back_left vel: %lf, back_right vel: %lf, ",
+            //             front_left_velocity, front_right_velocity, back_left_velocity, back_right_velocity);
 
             return hardware_interface::return_type::OK;
         }
@@ -179,14 +197,17 @@ namespace mobile_base_hardware {
             (void)time;
             (void)period;
 
-            if (!driver_ || !driver_->is_initialized()) {
-                return hardware_interface::return_type::ERROR;
-            }
-
-            for (std::size_t i = 0; i < joint_names_.size(); ++i) {
-                driver_->set_command_velocity(
-                    i, get_command(joint_names_[i] + "/velocity"));
-            }
+            driver_->set_command_velocity(front_left_motor_id_, get_command("front_left_wheel_joint/velocity"));
+            driver_->set_command_velocity(front_right_motor_id_, get_command("front_right_wheel_joint/velocity"));
+            driver_->set_command_velocity(back_left_motor_id_, get_command("back_left_wheel_joint/velocity"));
+            driver_->set_command_velocity(back_right_motor_id_, get_command("back_right_wheel_joint/velocity"));
+            
+            // RCLCPP_INFO(get_logger(),
+            //             "front_left vel cmd: %lf, front_right vel cmd: %lf, back_left vel cmd: %lf, back_right vel cmd: %lf",
+            //             get_command("front_left_wheel_joint/velocity"),
+            //             get_command("front_right_wheel_joint/velocity"),
+            //             get_command("back_left_wheel_joint/velocity"),
+            //             get_command("back_right_wheel_joint/velocity"));
 
             return hardware_interface::return_type::OK;
         }
@@ -195,7 +216,6 @@ namespace mobile_base_hardware {
 
 // Essa macro é necessária para registrar a classe MobileBaseHWInterface como um plugin do tipo hardware_interface::SystemInterface, para que o ros2_control possa carregá-la dinamicamente.
 #include "pluginlib/class_list_macros.hpp"
-
 // Essa macro é necessária para registrar a classe MobileBaseHWInterface como um plugin do tipo hardware_interface::SystemInterface, para que o ros2_control possa carregá-la dinamicamente.
 // provide -> namespace :: nome da classe, nome da classe pai (interface) :: tipo do plugin (hardware_interface::SystemInterface)
 PLUGINLIB_EXPORT_CLASS(mobile_base_hardware::MobileBaseHWInterface, hardware_interface::SystemInterface)

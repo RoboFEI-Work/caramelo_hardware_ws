@@ -54,6 +54,11 @@ namespace mobile_base_hardware {
             rclcpp::executors::SingleThreadedExecutor node_executor_;
             std::thread node_spin_thread_;
 
+                int front_left_motor_id_ = 0;
+                int front_right_motor_id_ = 1;
+                int back_left_motor_id_ = 2;
+                int back_right_motor_id_ = 3;
+
     }; // class MobileBaseHWInterface
 
 } //namespace mobile_base_hardware
