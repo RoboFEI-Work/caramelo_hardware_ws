@@ -30,13 +30,14 @@ struct MaxonDriverConfig
 {
 	std::string pigpio_host;
 	std::string pigpio_port;
-	static constexpr int kPwmFrequencyHz = 500;
-	static constexpr int kPwmRange = 255;
-	static constexpr int kPwmDutyMin = 0;
-	static constexpr int kPwmDutyMax = kPwmRange;
-	static constexpr int kPwmStopPercent = 50;
-	static constexpr int kPwmNeutralDuty =
-		(kPwmRange * kPwmStopPercent + 50) / 100;
+	static constexpr int kPulseUsReverseMax = 1000;
+	static constexpr int kPulseUsReverseMin = 1480;
+	static constexpr int kPulseUsNeutralMin = 1481;
+	static constexpr int kPulseUsNeutralMax = 1520;
+	static constexpr int kPulseUsForwardMin = 1521;
+	static constexpr int kPulseUsForwardMax = 2000;
+	static constexpr int kPulseUsNeutral =
+		(kPulseUsNeutralMin + kPulseUsNeutralMax) / 2;
 	double encoder_counts_per_wheel_rev = 28672.0;
 	double max_wheel_rad_per_sec = 21.3;
 };
@@ -148,8 +149,8 @@ private:
 	void encoder_read_loop(std::size_t motor_index);
 	void control_loop();
 	void update_cycle();
-	int velocity_to_duty(double wheel_velocity_rad_s) const;
-	int neutral_duty() const;
+	int velocity_to_pulse_width_us(double wheel_velocity_rad_s) const;
+	int neutral_pulse_width_us() const;
 
 	struct EncoderNotifyRuntime
 	{

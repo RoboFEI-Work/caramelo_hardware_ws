@@ -95,11 +95,7 @@ bool MaxonMotorsNode::initialize(
 		}
 
 		set_mode(pi_handle_, motor.config.pwm_gpio, PI_OUTPUT);
-		set_PWM_frequency(
-			pi_handle_, motor.config.pwm_gpio, static_cast<unsigned>(MaxonDriverConfig::kPwmFrequencyHz));
-		set_PWM_range(
-			pi_handle_, motor.config.pwm_gpio, static_cast<unsigned>(MaxonDriverConfig::kPwmRange));
-		set_PWM_dutycycle(pi_handle_, motor.config.pwm_gpio, neutral_duty());
+		set_servo_pulsewidth(pi_handle_, motor.config.pwm_gpio, neutral_pulse_width_us());
 
 		set_mode(pi_handle_, motor.config.enc_a_gpio, PI_INPUT);
 		set_mode(pi_handle_, motor.config.enc_b_gpio, PI_INPUT);
@@ -266,7 +262,7 @@ void MaxonMotorsNode::stop_all_motors()
 
 	for (auto & motor : motors_) {
 		motor.command_rad_s.store(0.0);
-		set_PWM_dutycycle(pi_handle_, motor.config.pwm_gpio, neutral_duty());
+		set_servo_pulsewidth(pi_handle_, motor.config.pwm_gpio, neutral_pulse_width_us());
 	}
 #endif
 }
@@ -425,30 +421,53 @@ void MaxonMotorsNode::update_cycle()
 		msg.data[i] = new_velocity;
 
 		const double cmd_signed = motor.command_rad_s.load() * motor.config.command_sign;
-		const int duty = velocity_to_duty(cmd_signed);
-		set_PWM_dutycycle(pi_handle_, motor.config.pwm_gpio, duty);
+		const int pulse_us = velocity_to_pulse_width_us(cmd_signed);
+		set_servo_pulsewidth(pi_handle_, motor.config.pwm_gpio, pulse_us);
 	}
 
 	velocity_pub_->publish(msg);
 #endif
 }
 
-int MaxonMotorsNode::velocity_to_duty(double wheel_velocity_rad_s) const
+int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) const
 {
 	const double max_rad = std::max(1e-6, driver_config_.max_wheel_rad_per_sec);
 	const double norm = std::clamp(wheel_velocity_rad_s / max_rad, -1.0, 1.0);
-	const double pwm_percent = 50.0 + (norm * 50.0);
-	const double duty_f = (pwm_percent * static_cast<double>(MaxonDriverConfig::kPwmRange)) / 100.0;
-	const int duty = static_cast<int>(std::lround(duty_f));
-	return clamp_int(duty, MaxonDriverConfig::kPwmDutyMin, MaxonDriverConfig::kPwmDutyMax);
+
+	if (norm > 0.0) {
+		const double pulse_f =
+			static_cast<double>(MaxonDriverConfig::kPulseUsForwardMin) +
+			norm * static_cast<double>(
+				MaxonDriverConfig::kPulseUsForwardMax - MaxonDriverConfig::kPulseUsForwardMin);
+		const int pulse_us = static_cast<int>(std::lround(pulse_f));
+		return clamp_int(
+			pulse_us,
+			MaxonDriverConfig::kPulseUsForwardMin,
+			MaxonDriverConfig::kPulseUsForwardMax);
+	}
+
+	if (norm < 0.0) {
+		const double reverse_norm = -norm;
+		const double pulse_f =
+			static_cast<double>(MaxonDriverConfig::kPulseUsReverseMin) -
+			reverse_norm * static_cast<double>(
+				MaxonDriverConfig::kPulseUsReverseMin - MaxonDriverConfig::kPulseUsReverseMax);
+		const int pulse_us = static_cast<int>(std::lround(pulse_f));
+		return clamp_int(
+			pulse_us,
+			MaxonDriverConfig::kPulseUsReverseMax,
+			MaxonDriverConfig::kPulseUsReverseMin);
+	}
+
+	return neutral_pulse_width_us();
 }
 
-int MaxonMotorsNode::neutral_duty() const
+int MaxonMotorsNode::neutral_pulse_width_us() const
 {
 	return clamp_int(
-		MaxonDriverConfig::kPwmNeutralDuty,
-		MaxonDriverConfig::kPwmDutyMin,
-		MaxonDriverConfig::kPwmDutyMax);
+		MaxonDriverConfig::kPulseUsNeutral,
+		MaxonDriverConfig::kPulseUsNeutralMin,
+		MaxonDriverConfig::kPulseUsNeutralMax);
 }
 
 }  // namespace mobile_base_hardware
