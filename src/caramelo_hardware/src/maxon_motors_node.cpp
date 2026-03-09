@@ -99,10 +99,10 @@ bool MaxonMotorsNode::initialize(
 
 		set_mode(pi_handle_, motor.config.enc_a_gpio, PI_INPUT);
 		set_mode(pi_handle_, motor.config.enc_b_gpio, PI_INPUT);
-		set_pull_up_down(pi_handle_, motor.config.enc_a_gpio, PI_PUD_OFF);
-		set_pull_up_down(pi_handle_, motor.config.enc_b_gpio, PI_PUD_OFF);
-		set_glitch_filter(pi_handle_, motor.config.enc_a_gpio, 1);
-		set_glitch_filter(pi_handle_, motor.config.enc_b_gpio, 1);
+		set_pull_up_down(pi_handle_, motor.config.enc_a_gpio, PI_PUD_UP);
+		set_pull_up_down(pi_handle_, motor.config.enc_b_gpio, PI_PUD_UP);
+		set_glitch_filter(pi_handle_, motor.config.enc_a_gpio, 0);
+		set_glitch_filter(pi_handle_, motor.config.enc_b_gpio, 0);
 
 		const int a0 = gpio_read(pi_handle_, motor.config.enc_a_gpio);
 		const int b0 = gpio_read(pi_handle_, motor.config.enc_b_gpio);
@@ -332,6 +332,16 @@ void MaxonMotorsNode::encoder_read_loop(std::size_t motor_index)
 	const uint32_t a_bit = bit(motor.config.enc_a_gpio);
 	const uint32_t b_bit = bit(motor.config.enc_b_gpio);
 	std::array<gpioReport_t, 32> reports{};
+	static constexpr int8_t kQuadTable[16] = {
+		0, -1, 1, 0,
+		1, 0, 0, -1,
+		-1, 0, 0, 1,
+		0, 1, -1, 0
+	};
+
+	const int init_a = (notify.last_level & a_bit) ? 1 : 0;
+	const int init_b = (notify.last_level & b_bit) ? 1 : 0;
+	int last_state = (init_a << 1) | init_b;
 
 	while (encoder_threads_running_.load()) {
 		if (notify.notify_fd < 0) {
@@ -369,12 +379,16 @@ void MaxonMotorsNode::encoder_read_loop(std::size_t motor_index)
 			const uint32_t level = reports[report_index].level;
 			const uint32_t changed = (notify.last_level ^ level) & notify.mask;
 
-			if (changed & a_bit) {
-				const bool a_now = (level & a_bit) != 0;
-				if (a_now) {
-					const bool b_now = (level & b_bit) != 0;
-					counts_[motor_index].fetch_add((b_now ? -1 : +1), std::memory_order_relaxed);
+			if ((changed & (a_bit | b_bit)) != 0) {
+				const int a_now = (level & a_bit) ? 1 : 0;
+				const int b_now = (level & b_bit) ? 1 : 0;
+				const int new_state = (a_now << 1) | b_now;
+				const int idx = (last_state << 2) | new_state;
+				const int delta = kQuadTable[idx];
+				if (delta != 0) {
+					counts_[motor_index].fetch_add(delta, std::memory_order_relaxed);
 				}
+				last_state = new_state;
 			}
 
 			notify.last_level = level & notify.mask;
@@ -396,6 +410,8 @@ void MaxonMotorsNode::control_loop()
 void MaxonMotorsNode::update_cycle()
 {
 #if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
+	std::lock_guard<std::mutex> lock(update_cycle_mutex_);
+
 	if (!initialized_ || pi_handle_ < 0) {
 		return;
 	}

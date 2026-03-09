@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -180,6 +181,7 @@ private:
 	std::atomic<bool> encoder_threads_running_{false};
 	std::thread control_thread_;
 	std::atomic<bool> control_thread_running_{false};
+	mutable std::mutex update_cycle_mutex_;
 };
 
 }  // namespace mobile_base_hardware

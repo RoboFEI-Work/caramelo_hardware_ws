@@ -46,6 +46,8 @@ namespace mobile_base_hardware {
 
             // Parametros gerais do node/driver (fixos no código)
             driver_config_ = MaxonDriverConfig{};
+            // Encoder: 1024 sinais por volta do motor, gearbox 1:28 e decodificacao em quadratura x4.
+            driver_config_.encoder_counts_per_wheel_rev = 1024.0 * 28.0 * 4.0;
 
             joint_names_.clear();
             motor_configs_.clear();
