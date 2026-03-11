@@ -8,17 +8,17 @@
 namespace mobile_base_hardware {
 
     namespace {
-        constexpr int kPwmFrontLeft = 18;
+        constexpr int kPwmFrontLeft = 17;
         constexpr int kEncAFrontLeft = 5;
         constexpr int kEncBFrontLeft = 6;
 
         constexpr int kPwmFrontRight = 23;
-        constexpr int kEncAFrontRight = 12;
-        constexpr int kEncBFrontRight = 13;
+        constexpr int kEncAFrontRight = 27;
+        constexpr int kEncBFrontRight = 22;
 
         constexpr int kPwmBackLeft = 24;
         constexpr int kEncABackLeft = 16;
-        constexpr int kEncBBackLeft = 19;
+        constexpr int kEncBBackLeft = 26;
 
         constexpr int kPwmBackRight = 25;
         constexpr int kEncABackRight = 20;

@@ -89,7 +89,7 @@ bool MaxonMotorsNode::initialize(
 		auto & motor = motors_[i];
 		motor.config = motor_configs[i];
 
-		if (motor.config.pwm_gpio == 18 || motor.config.pwm_gpio == 24) {
+		if (motor.config.pwm_gpio == 17 || motor.config.pwm_gpio == 24) {
 			motor.config.command_sign = -1.0;
 			motor.config.feedback_sign = -1.0;
 		}
