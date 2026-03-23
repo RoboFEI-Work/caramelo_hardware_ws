@@ -45,6 +45,18 @@ def generate_launch_description():
         arguments=["mecanum_controller"],
     )
 
+    laser_driver = Node(
+            package='sllidar_ros2',
+            executable='sllidar_node',
+            name='sllidar_node',
+            parameters=[os.path.join(
+                robot_bringup_path,
+                "config",
+                "rplidar_s2.yaml"
+            )],
+            output="screen"
+    )
+
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
@@ -60,6 +72,7 @@ def generate_launch_description():
             description='Inicia o RViz se true',
         ),
         robot_state_publisher_node,
+        laser_driver,
         control_node,
         joint_state_broadcaster_spawner,
         mecanum_drive_controller_spawner,
