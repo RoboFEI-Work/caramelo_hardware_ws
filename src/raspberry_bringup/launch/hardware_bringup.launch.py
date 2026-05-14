@@ -111,7 +111,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'imu_frame_id',
-            default_value='imu',
+            default_value='imu_link',
             description='Frame da IMU publicada pela WIT',
         ),
         robot_state_publisher_node,
