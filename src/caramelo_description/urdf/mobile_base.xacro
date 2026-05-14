@@ -2,6 +2,8 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
     <xacro:include filename="mecanum_wheel.xacro"/>
+    <xacro:include filename="base_tophat.xacro"/>
+    
 
     <!-- Parametros especificos do robo Caramelo -->
     <xacro:property name="base_mass" value="22.0"/>
@@ -94,6 +96,13 @@
         side="back_right" 
         x_reflect="-1" 
         y_reflect="-1"/>
+
+    <!-- Top hat on top of base -->
+    <xacro:base_tophat 
+        prefix="${prefix}" 
+        parent="${prefix}base_link" />
+
+    
 
   </xacro:macro>
 

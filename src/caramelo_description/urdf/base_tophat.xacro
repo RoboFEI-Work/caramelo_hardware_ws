@@ -1,0 +1,124 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <xacro:include filename="common_properties.xacro"/>
+    <xacro:include filename="lidar_sensor.xacro"/>
+    <xacro:include filename="imu.urdf.xacro"/>
+
+    <xacro:property name="plate_x" value="0.315"/>
+    <xacro:property name="plate_y" value="0.30"/>
+    <xacro:property name="plate_z" value="0.003"/>
+    <xacro:property name="leg_radius" value="0.005"/>
+    <xacro:property name="leg_height" value="0.05"/>
+    <xacro:property name="leg_offset_x" value="${plate_x/2 - 0.01 - leg_radius}"/>
+    <xacro:property name="leg_offset_y" value="${plate_y/2 - 0.01 - leg_radius}"/>
+    <xacro:property name="leg_z" value="-${leg_height/2}"/>
+    <xacro:property name="tophat_mass" value="1.0"/>
+    <xacro:property name="tophat_inertia_height" value="${plate_z + leg_height}"/>
+
+    <!-- Macro para descrever a plataforma top hat -->
+    <xacro:macro name="base_tophat" params="prefix='' parent='base_link'">
+        <link name="${prefix}base_tophat_link">
+            <visual>
+                <geometry>
+                    <box size="${plate_x} ${plate_y} ${plate_z}"/>
+                </geometry>
+                <origin xyz="0 0 ${plate_z/2}" rpy="0 0 0"/>
+                <material name="gray"><color rgba="0.6 0.6 0.6 1.0"/></material>
+            </visual>
+            <collision>
+                <geometry>
+                    <box size="${plate_x} ${plate_y} ${plate_z}"/>
+                </geometry>
+                <origin xyz="0 0 ${plate_z/2}"/>
+            </collision>
+
+            <inertial>
+                <mass value="${tophat_mass}"/>
+                <origin xyz="0 0 ${tophat_inertia_height/2}" rpy="0 0 0"/>
+                <inertia ixx="${(tophat_mass/12.0) * (plate_y*plate_y + tophat_inertia_height*tophat_inertia_height)}" ixy="0" ixz="0"
+                         iyy="${(tophat_mass/12.0) * (plate_x*plate_x + tophat_inertia_height*tophat_inertia_height)}" iyz="0"
+                         izz="${(tophat_mass/12.0) * (plate_x*plate_x + plate_y*plate_y)}"/>
+            </inertial>
+
+            <visual>
+                <geometry>
+                    <cylinder radius="${leg_radius}" length="${leg_height}"/>
+                </geometry>
+                <origin xyz="${leg_offset_x} ${leg_offset_y} ${leg_z}" rpy="0 0 0"/>
+                <material name="black"><color rgba="0.1 0.1 0.1 1.0"/></material>
+            </visual>
+            <visual>
+                <geometry>
+                    <cylinder radius="${leg_radius}" length="${leg_height}"/>
+                </geometry>
+                <origin xyz="${leg_offset_x} ${-leg_offset_y} ${leg_z}" rpy="0 0 0"/>
+                <material name="black"><color rgba="0.1 0.1 0.1 1.0"/></material>
+            </visual>
+            <visual>
+                <geometry>
+                    <cylinder radius="${leg_radius}" length="${leg_height}"/>
+                </geometry>
+                <origin xyz="${-leg_offset_x} ${leg_offset_y} ${leg_z}" rpy="0 0 0"/>
+                <material name="black"><color rgba="0.1 0.1 0.1 1.0"/></material>
+            </visual>
+            <visual>
+                <geometry>
+                    <cylinder radius="${leg_radius}" length="${leg_height}"/>
+                </geometry>
+                <origin xyz="${-leg_offset_x} ${-leg_offset_y} ${leg_z}" rpy="0 0 0"/>
+                <material name="black"><color rgba="0.1 0.1 0.1 1.0"/></material>
+            </visual>
+
+            <collision>
+                <geometry>
+                    <cylinder radius="${leg_radius}" length="${leg_height}"/>
+                </geometry>
+                <origin xyz="${leg_offset_x} ${leg_offset_y} ${leg_z}"/>
+            </collision>
+            <collision>
+                <geometry>
+                    <cylinder radius="${leg_radius}" length="${leg_height}"/>
+                </geometry>
+                <origin xyz="${leg_offset_x} ${-leg_offset_y} ${leg_z}"/>
+            </collision>
+            <collision>
+                <geometry>
+                    <cylinder radius="${leg_radius}" length="${leg_height}"/>
+                </geometry>
+                <origin xyz="${-leg_offset_x} ${leg_offset_y} ${leg_z}"/>
+            </collision>
+            <collision>
+                <geometry>
+                    <cylinder radius="${leg_radius}" length="${leg_height}"/>
+                </geometry>
+                <origin xyz="${-leg_offset_x} ${-leg_offset_y} ${leg_z}"/>
+            </collision>
+        </link>
+
+        <joint name="${prefix}tophat_joint" type="fixed">
+            <parent link="${parent}"/>
+            <child link="${prefix}base_tophat_link"/>
+            <origin xyz="0 0 ${base_height + 0.05}" rpy="0 0 0"/>
+        </joint>
+
+        <!-- Lidar no centro (0 0) -->
+        <xacro:lidar_sensor 
+            prefix="${prefix}" 
+            parent="${prefix}base_tophat_link" 
+            frame_id="laser_frame" 
+            xyz_offset="0 0 0.02" 
+            rpy_offset="0 0 0"/>
+
+        <!-- IMU em 0.10 0 -->
+        <xacro:imu_sensor 
+            prefix="${prefix}" 
+            parent="${prefix}base_tophat_link" 
+            frame_id="imu" 
+            xyz_offset="0.10 0 0.01" 
+            rpy_offset="0 0 0"/>
+
+        
+
+    </xacro:macro>
+</robot>
