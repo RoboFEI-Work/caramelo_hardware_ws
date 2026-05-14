@@ -33,8 +33,9 @@ mecanum_controller:
     base_frame_id: base_footprint
     odom_frame_id: odom
 
-    # Habilita TF do controlador (odom -> base_footprint)
-    enable_odom_tf: true
+    # EKF vai publicar o TF final odom -> base_footprint
+    # Mantemos o TF bruto do controlador desabilitado para evitar conflito
+    enable_odom_tf: false
 
     # Covariâncias (ajuste fino depois conforme ruído esperado)
     twist_covariance_diagonal: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
