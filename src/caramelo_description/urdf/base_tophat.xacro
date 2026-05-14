@@ -107,7 +107,7 @@
             parent="${prefix}base_tophat_link" 
             frame_id="laser_frame" 
             xyz_offset="0 0 0.02" 
-            rpy_offset="0 0 0"/>
+            rpy_offset="0 0 3.141592653589793"/>
 
         <!-- IMU em 0.10 0 -->
         <xacro:imu_sensor 
