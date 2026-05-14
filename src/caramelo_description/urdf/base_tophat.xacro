@@ -1,7 +1,6 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-    <xacro:include filename="common_properties.xacro"/>
     <xacro:include filename="lidar_sensor.xacro"/>
     <xacro:include filename="imu.urdf.xacro"/>
 
@@ -24,7 +23,7 @@
                     <box size="${plate_x} ${plate_y} ${plate_z}"/>
                 </geometry>
                 <origin xyz="0 0 ${plate_z/2}" rpy="0 0 0"/>
-                <material name="gray"><color rgba="0.6 0.6 0.6 1.0"/></material>
+                <material name="grey"/>
             </visual>
             <collision>
                 <geometry>
@@ -46,28 +45,28 @@
                     <cylinder radius="${leg_radius}" length="${leg_height}"/>
                 </geometry>
                 <origin xyz="${leg_offset_x} ${leg_offset_y} ${leg_z}" rpy="0 0 0"/>
-                <material name="black"><color rgba="0.1 0.1 0.1 1.0"/></material>
+                <material name="black"/>
             </visual>
             <visual>
                 <geometry>
                     <cylinder radius="${leg_radius}" length="${leg_height}"/>
                 </geometry>
                 <origin xyz="${leg_offset_x} ${-leg_offset_y} ${leg_z}" rpy="0 0 0"/>
-                <material name="black"><color rgba="0.1 0.1 0.1 1.0"/></material>
+                <material name="black"/>
             </visual>
             <visual>
                 <geometry>
                     <cylinder radius="${leg_radius}" length="${leg_height}"/>
                 </geometry>
                 <origin xyz="${-leg_offset_x} ${leg_offset_y} ${leg_z}" rpy="0 0 0"/>
-                <material name="black"><color rgba="0.1 0.1 0.1 1.0"/></material>
+                <material name="black"/>
             </visual>
             <visual>
                 <geometry>
                     <cylinder radius="${leg_radius}" length="${leg_height}"/>
                 </geometry>
                 <origin xyz="${-leg_offset_x} ${-leg_offset_y} ${leg_z}" rpy="0 0 0"/>
-                <material name="black"><color rgba="0.1 0.1 0.1 1.0"/></material>
+                <material name="black"/>
             </visual>
 
             <collision>
