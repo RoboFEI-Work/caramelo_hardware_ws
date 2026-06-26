@@ -33,9 +33,9 @@ struct MaxonDriverConfig
 	std::string pigpio_port;
 	static constexpr int kPulseUsReverseMax = 1000;
 	static constexpr int kPulseUsReverseMin = 1480;
-	static constexpr int kPulseUsNeutralMin = 1481;
+	static constexpr int kPulseUsNeutralMin = 1480;
 	static constexpr int kPulseUsNeutralMax = 1520;
-	static constexpr int kPulseUsForwardMin = 1521;
+	static constexpr int kPulseUsForwardMin = 1520;
 	static constexpr int kPulseUsForwardMax = 2000;
 	static constexpr int kPulseUsNeutral =
 		(kPulseUsNeutralMin + kPulseUsNeutralMax) / 2;

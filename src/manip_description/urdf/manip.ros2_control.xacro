@@ -1,0 +1,98 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <xacro:arg name="use_mock_components" default="true"/>
+
+    <ros2_control name="Arm" type="system">
+        <hardware>
+            <xacro:if value="$(arg use_mock_components)">
+                <!-- By default, set up controllers for simulation. This won't work on real hardware -->
+                <plugin>mock_components/GenericSystem</plugin>
+            </xacro:if>
+            <xacro:unless value="$(arg use_mock_components)">
+                <plugin>arm_hardware/ArmHardwareInterface</plugin>
+                <param name="manip_joint1_motor_id">1</param>
+                <param name="manip_joint2_motor_id">2</param>
+                <param name="manip_joint3_motor_id">3</param>
+                <param name="manip_joint4_motor_id">4</param>
+                <param name="manip_joint5_motor_id">5</param>
+                <param name="manip_joint6_motor_id">6</param>
+                <param name="manip_joint7_motor_id">7</param>
+                <param name="dynamixel_port">/dev/ttyUSB0</param>
+                <!-- Ajuste por calibração para maior precisão de torque. -->
+                <param name="torque_constant_nm_per_amp">2.4</param>
+            </xacro:unless>
+        </hardware>
+        <joint name="manip_joint1">
+            <command_interface name="position"/>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+            <state_interface name="current"/>
+            <state_interface name="voltage"/>
+            <state_interface name="effort"/>
+            <state_interface name="temperature"/>
+        </joint>
+        <joint name="manip_joint2">
+            <command_interface name="position"/>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+            <state_interface name="current"/>
+            <state_interface name="voltage"/>
+            <state_interface name="effort"/>
+            <state_interface name="temperature"/>
+        </joint>
+        <joint name="manip_joint3">
+            <command_interface name="position"/>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+            <state_interface name="current"/>
+            <state_interface name="voltage"/>
+            <state_interface name="effort"/>
+            <state_interface name="temperature"/>
+        </joint>
+        <joint name="manip_joint4">
+            <command_interface name="position"/>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+            <state_interface name="current"/>
+            <state_interface name="voltage"/>
+            <state_interface name="effort"/>
+            <state_interface name="temperature"/>
+        </joint>
+        <joint name="manip_joint5">
+            <command_interface name="position"/>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+            <state_interface name="current"/>
+            <state_interface name="voltage"/>
+            <state_interface name="effort"/>
+            <state_interface name="temperature"/>
+        </joint>
+        <joint name="manip_joint6">
+            <command_interface name="position"/>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+            <state_interface name="current"/>
+            <state_interface name="voltage"/>
+            <state_interface name="effort"/>
+            <state_interface name="temperature"/>
+        </joint>
+        <joint name="manip_joint7">
+            <command_interface name="position"/>
+            <state_interface name="position">
+                <param name="initial_value">0.0</param>
+            </state_interface>
+            <state_interface name="current"/>
+            <state_interface name="voltage"/>
+            <state_interface name="effort"/>
+            <state_interface name="temperature"/>
+        </joint>
+    </ros2_control>
+
+</robot>

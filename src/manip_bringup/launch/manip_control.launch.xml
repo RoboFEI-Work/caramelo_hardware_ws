@@ -1,0 +1,29 @@
+<launch>
+    <let
+        name="urdf_path"
+        value="$(find-pkg-share manip_description)/urdf/manip.urdf.xacro"/>
+
+    <arg name="use_mock_components" default="false"/>
+
+    <node pkg="robot_state_publisher" exec="robot_state_publisher">
+        <param
+            name="robot_description"
+            value="$(command 'xacro $(var urdf_path) use_mock_components:=$(var use_mock_components) use_realsense:=false')"/>
+    </node>
+
+    <node pkg="controller_manager" exec="ros2_control_node" output="screen">
+        <param
+            name="robot_description"
+            value="$(command 'xacro $(var urdf_path) use_mock_components:=$(var use_mock_components) use_realsense:=false')"/>
+        <param from="$(find-pkg-share manip_bringup)/config/ros2_controllers.yaml"/>
+    </node>
+
+    <node pkg="controller_manager" exec="spawner" output="screen"
+          args="arm_controller"/>
+
+    <node pkg="controller_manager" exec="spawner" output="screen"
+          args="gripper_controller"/>
+
+    <node pkg="controller_manager" exec="spawner" output="screen"
+          args="joint_state_broadcaster"/>
+</launch>
