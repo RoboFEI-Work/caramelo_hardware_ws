@@ -1,27 +1,23 @@
 <?xml version="1.0"?>
 <robot name="manip" xmlns:xacro="http://ros.org/wiki/xacro">
 
-  <!-- ================= REALSENSE INCLUDE ================= -->
+  <xacro:include filename="../sensors/rgbd_camera.urdf.xacro"/>
 
-  <xacro:arg name="use_realsense" default="true"/>
-
-  <xacro:if value="$(arg use_realsense)">
-    <xacro:include filename="$(find realsense2_description)/urdf/_d455.urdf.xacro"/>
-  </xacro:if>
+  <xacro:macro name="manip_arm" params="base_link_name:='base_link' use_realsense:=true">
 
   <!-- ================= BASE ================= -->
 
-  <link name="base_link">
+  <link name="${base_link_name}">
     <visual>
       <geometry>
-        <mesh filename="package://manip_description/meshes/base_link.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/base_link.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <origin xyz="0 0 0" rpy="0 0 0"/>
     </visual>
 
     <collision>
       <geometry>
-        <mesh filename="package://manip_description/meshes/base_link.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/base_link.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <origin xyz="0 0 0" rpy="0 0 0"/>
     </collision>
@@ -41,7 +37,7 @@
 
     <visual>
       <geometry>
-        <mesh filename="package://manip_description/meshes/link1.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/link1.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <origin xyz="0 0 0.0" rpy="0 0 0"/>
       <material name="red">
@@ -51,7 +47,7 @@
 
     <collision>
       <geometry>
-        <mesh filename="package://manip_description/meshes/link1.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/link1.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <origin xyz="0 0 0.0" rpy="0 0 0"/>
     </collision>
@@ -72,7 +68,7 @@
 
     <visual>
       <geometry>
-        <mesh filename="package://manip_description/meshes/link2.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/link2.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <origin xyz="0 0 -0.09775" rpy="0 0 0"/>
       <material name="green">
@@ -82,7 +78,7 @@
 
     <collision>
       <geometry>
-        <mesh filename="package://manip_description/meshes/link2.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/link2.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <origin xyz="0 0 -0.09775" rpy="0 0 0"/>
     </collision>
@@ -103,7 +99,7 @@
 
     <visual>
       <geometry>
-        <mesh filename="package://manip_description/meshes/link3.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/link3.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <origin xyz="0 0 -0.28275" rpy="0 0 0"/>
       <material name="blue">
@@ -113,7 +109,7 @@
 
     <collision>
       <geometry>
-        <mesh filename="package://manip_description/meshes/link3.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/link3.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <origin xyz="0 0 -0.28275" rpy="0 0 0"/>
     </collision>
@@ -134,7 +130,7 @@
 
     <visual>
       <geometry>
-        <mesh filename="package://manip_description/meshes/link4.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/link4.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <origin xyz="0 0 -0.48775" rpy="0 0 3.14"/>
       <material name="yellow">
@@ -144,7 +140,7 @@
 
     <collision>
       <geometry>
-        <mesh filename="package://manip_description/meshes/link4.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/link4.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <origin xyz="0 0 -0.48775" rpy="0 0 0"/>
     </collision>
@@ -165,7 +161,7 @@
 
     <visual>
       <geometry>
-        <mesh filename="package://manip_description/meshes/link5.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/link5.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <origin xyz="0 0 -0.5659" rpy="0.0 0 0"/>
       <material name="cyan">
@@ -175,7 +171,7 @@
 
     <collision>
       <geometry>
-        <mesh filename="package://manip_description/meshes/link5.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/link5.stl" scale="0.001 0.001 0.001"/>
       </geometry>
       <origin xyz="0 0 -0.5659" rpy="0.0 0 0"/>
     </collision>
@@ -192,26 +188,19 @@
 
   <!-- ================= REALSENSE D455 ================= -->
 
-  <xacro:if value="$(arg use_realsense)">
-    <xacro:sensor_d455
+  <xacro:if value="${use_realsense}">
+    <xacro:rgbd_camera
         parent="link5"
-        name="camera"
-        use_nominal_extrinsics="true">
-
-        <!--
-        Ajuste da pose da câmera em relação ao flange
-        -->
-
-        <origin xyz="0 -0.055 0.0125"
-                rpy="0 -1.57079632679 -1.57079632679"/>
-
-    </xacro:sensor_d455>
+        camera_name="camera"
+        use_nominal_extrinsics="true"
+        xyz_offset="0 -0.055 0.0125"
+        rpy_offset="0 -1.57079632679 -1.57079632679"/>
   </xacro:if>
 
   <!-- ================= ARM JOINTS ================= -->
 
   <joint name="manip_joint1" type="revolute">
-    <parent link="base_link"/>
+    <parent link="${base_link_name}"/>
     <child link="link1"/>
     <axis xyz="0 0 1"/>
     <limit lower="-3.14" upper="3.14"
@@ -289,5 +278,7 @@
     <child link="tcp2"/>
     <origin xyz="0 0 0.3" rpy="0 0 0"/>
   </joint>
+
+  </xacro:macro>
 
 </robot>

@@ -11,7 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
 
 install(
-  DIRECTORY urdf launch rviz
+  DIRECTORY launch meshes rviz urdf
   DESTINATION share/${PROJECT_NAME}/
 )
 

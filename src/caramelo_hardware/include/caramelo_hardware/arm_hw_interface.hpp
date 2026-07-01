@@ -1,15 +1,15 @@
-#ifndef ARM_HARDWARE_INTERFACE_HPP
-#define ARM_HARDWARE_INTERFACE_HPP
+#ifndef CARAMELO_HARDWARE_ARM_HW_INTERFACE_HPP
+#define CARAMELO_HARDWARE_ARM_HW_INTERFACE_HPP
 
 #include <string>
 #include <vector>
 
 #include "hardware_interface/system_interface.hpp"
-#include "manip_hardware/xm540_driver.hpp"
+#include "caramelo_hardware/xm540_driver.hpp"
 
-namespace arm_hardware {
+namespace arm_hardware_interface {
 
-class ArmHardwareInterface : public hardware_interface::SystemInterface
+class ArmHWInterface : public hardware_interface::SystemInterface
 {
 public:
     // Lifecycle node override
@@ -37,8 +37,8 @@ private:
     std::string port_;
     double torque_constant_nm_per_amp_{2.4};
 
-}; // class ArmHardwareInterface
+}; // class ArmHWInterface
 
-} // namespace arm_hardware
+} // namespace arm_hardware_interface
 
 #endif

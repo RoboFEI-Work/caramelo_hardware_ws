@@ -1,12 +1,12 @@
-#include "manip_hardware/arm_hardware_interface.hpp"
+#include "caramelo_hardware/arm_hw_interface.hpp"
 
 #include <algorithm>
 #include <exception>
 #include <string>
 
-namespace arm_hardware {
+namespace arm_hardware_interface {
 
-hardware_interface::CallbackReturn ArmHardwareInterface::on_init
+hardware_interface::CallbackReturn ArmHWInterface::on_init
     (const hardware_interface::HardwareComponentInterfaceParams & params)
 {
     if (hardware_interface::SystemInterface::on_init(params) !=
@@ -77,7 +77,7 @@ hardware_interface::CallbackReturn ArmHardwareInterface::on_init
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
-hardware_interface::CallbackReturn ArmHardwareInterface::on_configure
+hardware_interface::CallbackReturn ArmHWInterface::on_configure
     (const rclcpp_lifecycle::State & previous_state)
 {
     (void)previous_state;
@@ -87,7 +87,7 @@ hardware_interface::CallbackReturn ArmHardwareInterface::on_configure
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
-hardware_interface::CallbackReturn ArmHardwareInterface::on_activate
+hardware_interface::CallbackReturn ArmHWInterface::on_activate
     (const rclcpp_lifecycle::State & previous_state)
 {
     (void)previous_state;
@@ -105,7 +105,7 @@ hardware_interface::CallbackReturn ArmHardwareInterface::on_activate
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
-hardware_interface::CallbackReturn ArmHardwareInterface::on_deactivate
+hardware_interface::CallbackReturn ArmHWInterface::on_deactivate
     (const rclcpp_lifecycle::State & previous_state)
 {
     (void)previous_state;
@@ -117,7 +117,7 @@ hardware_interface::CallbackReturn ArmHardwareInterface::on_deactivate
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
-hardware_interface::return_type ArmHardwareInterface::read
+hardware_interface::return_type ArmHWInterface::read
     (const rclcpp::Time & time, const rclcpp::Duration & period)
 {
     (void)time;
@@ -147,7 +147,7 @@ hardware_interface::return_type ArmHardwareInterface::read
     return hardware_interface::return_type::OK;
 }
 
-hardware_interface::return_type ArmHardwareInterface::write
+hardware_interface::return_type ArmHWInterface::write
     (const rclcpp::Time & time, const rclcpp::Duration & period)
 {
     (void)time;
@@ -174,8 +174,8 @@ hardware_interface::return_type ArmHardwareInterface::write
     return hardware_interface::return_type::OK;
 }
 
-} // namespace arm_hardware
+} // namespace arm_hardware_interface
 
 #include "pluginlib/class_list_macros.hpp"
 
-PLUGINLIB_EXPORT_CLASS(arm_hardware::ArmHardwareInterface, hardware_interface::SystemInterface)
+PLUGINLIB_EXPORT_CLASS(arm_hardware_interface::ArmHWInterface, hardware_interface::SystemInterface)

@@ -11,7 +11,7 @@ def generate_launch_description():
     robot_description_path = get_package_share_path('caramelo_description')
     robot_bringup_path = get_package_share_path('raspberry_bringup')
     
-    urdf_path = os.path.join(robot_description_path, 'urdf', 'robot.urdf.xacro')
+    urdf_path = os.path.join(robot_description_path, 'urdf', 'robots', 'robot.urdf.xacro')
     robot_description = ParameterValue(Command(['xacro ', urdf_path]), value_type=str)
     robot_controllers = os.path.join(robot_bringup_path, 'config', 'caramelo_controllers.yaml')
 

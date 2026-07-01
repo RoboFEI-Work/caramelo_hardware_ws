@@ -1,21 +1,22 @@
 <launch>
     <let
         name="urdf_path"
-        value="$(find-pkg-share manip_description)/urdf/manip.urdf.xacro"/>
+        value="$(find-pkg-share caramelo_description)/urdf/robots/manipulator.urdf.xacro"/>
 
     <arg name="use_mock_components" default="false"/>
+    <arg name="use_realsense" default="true"/>
 
     <node pkg="robot_state_publisher" exec="robot_state_publisher">
         <param
             name="robot_description"
-            value="$(command 'xacro $(var urdf_path) use_mock_components:=$(var use_mock_components) use_realsense:=false')"/>
+            value="$(command 'xacro $(var urdf_path) use_mock_components:=$(var use_mock_components) use_realsense:=$(var use_realsense)')"/>
     </node>
 
     <node pkg="controller_manager" exec="ros2_control_node" output="screen">
         <param
             name="robot_description"
-            value="$(command 'xacro $(var urdf_path) use_mock_components:=$(var use_mock_components) use_realsense:=false')"/>
-        <param from="$(find-pkg-share manip_bringup)/config/ros2_controllers.yaml"/>
+            value="$(command 'xacro $(var urdf_path) use_mock_components:=$(var use_mock_components) use_realsense:=$(var use_realsense)')"/>
+        <param from="$(find-pkg-share raspberry_bringup)/config/manip_ros2_controllers.yaml"/>
     </node>
 
     <node pkg="controller_manager" exec="spawner" output="screen"

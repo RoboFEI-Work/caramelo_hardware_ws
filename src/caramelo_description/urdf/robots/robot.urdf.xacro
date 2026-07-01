@@ -4,16 +4,30 @@
   <!-- Argumentos -->
   <xacro:arg name="robot_name" default="caramelo"/>
   <xacro:arg name="prefix" default=""/>
+  <xacro:arg name="use_manipulator" default="true"/>
+  <xacro:arg name="use_realsense" default="true"/>
+  <xacro:arg name="use_mock_components" default="true"/>
+  <xacro:arg name="manip_mount_xyz" default="0.185 0 0.078"/>
+  <xacro:arg name="manip_mount_rpy" default="0 0 0"/>
 
   <!-- Includes -->
-  <xacro:include filename="common_properties.xacro"/>
-  <xacro:include filename="lidar_sensor.xacro"/>
-  <xacro:include filename="mobile_base.xacro"/>
-  <xacro:include filename="mobile_base.ros2_control.xacro"/>
+  <xacro:include filename="../materials.xacro"/>
+  <xacro:include filename="../mech/mobile_base.xacro"/>
+  <xacro:include filename="../control/mobile_base.ros2_control.xacro"/>
+  <xacro:include filename="../control/manipulator.ros2_control.xacro"/>
+  <xacro:include filename="../mech/caramelo_manipulator.xacro"/>
 
   <!-- Base movel completa (base_link + footprint + 4 rodas) -->
   <xacro:mobile_base prefix="$(arg prefix)"/>
 
-  
+  <xacro:if value="$(arg use_manipulator)">
+    <xacro:caramelo_manipulator
+      prefix="$(arg prefix)"
+      parent="$(arg prefix)base_link"
+      use_realsense="$(arg use_realsense)"
+      manip_mount_xyz="$(arg manip_mount_xyz)"
+      manip_mount_rpy="$(arg manip_mount_rpy)"/>
+    <xacro:manipulator_ros2_control use_mock_components="$(arg use_mock_components)"/>
+  </xacro:if>
 
 </robot>

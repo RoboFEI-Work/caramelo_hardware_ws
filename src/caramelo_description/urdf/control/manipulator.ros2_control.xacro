@@ -1,16 +1,15 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-    <xacro:arg name="use_mock_components" default="true"/>
-
+    <xacro:macro name="manipulator_ros2_control" params="use_mock_components:=true">
     <ros2_control name="Arm" type="system">
         <hardware>
-            <xacro:if value="$(arg use_mock_components)">
+            <xacro:if value="${use_mock_components}">
                 <!-- By default, set up controllers for simulation. This won't work on real hardware -->
                 <plugin>mock_components/GenericSystem</plugin>
             </xacro:if>
-            <xacro:unless value="$(arg use_mock_components)">
-                <plugin>arm_hardware/ArmHardwareInterface</plugin>
+            <xacro:unless value="${use_mock_components}">
+                <plugin>arm_hardware_interface/ArmHWInterface</plugin>
                 <param name="manip_joint1_motor_id">1</param>
                 <param name="manip_joint2_motor_id">2</param>
                 <param name="manip_joint3_motor_id">3</param>
@@ -94,5 +93,6 @@
             <state_interface name="temperature"/>
         </joint>
     </ros2_control>
+    </xacro:macro>
 
 </robot>

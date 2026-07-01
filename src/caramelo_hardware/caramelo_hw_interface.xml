@@ -6,4 +6,12 @@
             This is the hardware interface for the mobile base of the robot.
         </description>
     </class>
+    <!-- Para criar varios plugins, adicione mais classes aqui. -->
+    <class  name="arm_hardware_interface/ArmHWInterface"
+            type="arm_hardware_interface::ArmHWInterface"
+            base_class_type="hardware_interface::SystemInterface">
+        <description>
+            This is the hardware interface for the arm of the robot.
+        </description>
+    </class>
 </library>

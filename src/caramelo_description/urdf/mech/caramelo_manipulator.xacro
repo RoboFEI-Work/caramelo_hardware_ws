@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="manipulator_arm.xacro"/>
+  <xacro:include filename="manipulator_gripper.xacro"/>
+
+  <xacro:macro name="caramelo_manipulator" params="
+    prefix:=''
+    parent:='base_link'
+    use_realsense:=true
+    manip_mount_xyz:='0.185 0 0.078'
+    manip_mount_rpy:='0 0 0'">
+
+    <!-- AJUSTAR_NO_ROBO: conferir a pose real do suporte do manipulador no chassi. -->
+    <joint name="${prefix}manipulator_mount_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child link="manip_base_link"/>
+      <origin xyz="${manip_mount_xyz}" rpy="${manip_mount_rpy}"/>
+    </joint>
+
+    <!-- IMPORTANTE: o base_link do manipulador vira manip_base_link para nao colidir com a base movel. -->
+    <xacro:manip_arm base_link_name="manip_base_link" use_realsense="${use_realsense}"/>
+    <xacro:manip_gripper/>
+
+    <joint name="${prefix}gripper_base_joint" type="fixed">
+      <parent link="link5"/>
+      <child link="gripper_base_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+
+  </xacro:macro>
+
+</robot>

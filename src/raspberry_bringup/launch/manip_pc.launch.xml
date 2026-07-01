@@ -2,12 +2,13 @@
 
     <let
         name="urdf_path"
-        value="$(find-pkg-share manip_description)/urdf/manip.urdf.xacro"/>
+        value="$(find-pkg-share caramelo_description)/urdf/robots/manipulator.urdf.xacro"/>
 
     <let name="rviz_config_path"
-        value="$(find-pkg-share manip_bringup)/config/manip_moveit.rviz"/>
+        value="$(find-pkg-share raspberry_bringup)/config/manip_moveit.rviz"/>
 
     <arg name="launch_realsense" default="true"/>
+    <arg name="launch_realsense_driver" default="true"/>
     <arg name="launch_apriltag" default="true"/>
     <arg name="launch_pick_action" default="true"/>
     <arg name="launch_place_action" default="true"/>
@@ -32,7 +33,7 @@
         <arg name="capabilities" value="move_group/ExecuteTaskSolutionCapability"/>
     </include>
 
-    <group if="$(var launch_realsense)">
+    <group if="$(var launch_realsense_driver)">
         <include file="$(find-pkg-share realsense2_camera)/launch/rs_launch.py">
             <arg name="camera_name" value="camera"/>
             <arg name="align_depth.enable" value="true"/>

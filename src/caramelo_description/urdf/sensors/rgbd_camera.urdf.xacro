@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="rgbd_camera" params="
+    parent:='base_link'
+    camera_name:='camera'
+    xyz_offset:='0 0 0'
+    rpy_offset:='0 0 0'
+    use_nominal_extrinsics:=true">
+
+    <!-- Intel RealSense D455 vendorizada no caramelo_description. -->
+    <xacro:include filename="$(find caramelo_description)/urdf/sensors/realsense/_d455.urdf.xacro"/>
+
+    <xacro:sensor_d455
+        parent="${parent}"
+        name="${camera_name}"
+        use_nominal_extrinsics="${use_nominal_extrinsics}">
+      <origin xyz="${xyz_offset}" rpy="${rpy_offset}"/>
+    </xacro:sensor_d455>
+
+  </xacro:macro>
+
+</robot>

@@ -2,13 +2,14 @@
 
     <let
         name="urdf_path"
-        value="$(find-pkg-share manip_description)/urdf/manip.urdf.xacro"/>
+        value="$(find-pkg-share caramelo_description)/urdf/robots/manipulator.urdf.xacro"/>
 
     <let name="rviz_config_path"
-        value="$(find-pkg-share manip_bringup)/config/manip_moveit.rviz"/>
+        value="$(find-pkg-share raspberry_bringup)/config/manip_moveit.rviz"/>
 
             <arg name="use_mock_components" default="false"/>
             <arg name="launch_realsense" default="true"/>
+            <arg name="launch_realsense_driver" default="true"/>
             <arg name="launch_apriltag" default="true"/>
             <arg name="launch_pick_action" default="true"/>
             <arg name="launch_place_action" default="true"/>
@@ -23,7 +24,7 @@
     <node pkg="robot_state_publisher" exec="robot_state_publisher" >
         <param
             name="robot_description"
-            value="$(command 'xacro $(var urdf_path) use_mock_components:=$(var use_mock_components)')"/>
+            value="$(command 'xacro $(var urdf_path) use_mock_components:=$(var use_mock_components) use_realsense:=$(var launch_realsense)')"/>
     </node>
 
     <node pkg="rviz2" exec="rviz2" output="screen" 
@@ -32,8 +33,8 @@
     <node pkg="controller_manager" exec="ros2_control_node" output="screen" >
           <param
             name="robot_description"
-                                    value="$(command 'xacro $(var urdf_path) use_mock_components:=$(var use_mock_components)')"/>
-          <param from="$(find-pkg-share manip_bringup)/config/ros2_controllers.yaml"/>
+                                    value="$(command 'xacro $(var urdf_path) use_mock_components:=$(var use_mock_components) use_realsense:=$(var launch_realsense)')"/>
+          <param from="$(find-pkg-share raspberry_bringup)/config/manip_ros2_controllers.yaml"/>
     </node>
 
     <node pkg="controller_manager" exec="spawner" output="screen"
@@ -49,7 +50,7 @@
                   <arg name="capabilities" value="move_group/ExecuteTaskSolutionCapability"/>
             </include>
 
-            <group if="$(var launch_realsense)">
+            <group if="$(var launch_realsense_driver)">
                   <include file="$(find-pkg-share realsense2_camera)/launch/rs_launch.py">
                         <arg name="camera_name" value="camera"/>
                         <arg name="align_depth.enable" value="true"/>

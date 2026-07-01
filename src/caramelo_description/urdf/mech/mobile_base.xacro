@@ -2,37 +2,47 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
     <xacro:include filename="mecanum_wheel.xacro"/>
-    <xacro:include filename="lidar_sensor.xacro"/>
-    <xacro:include filename="imu.urdf.xacro"/>
+    <xacro:include filename="../sensors/lidar_sensor.xacro"/>
+    <xacro:include filename="../sensors/imu.urdf.xacro"/>
     
 
     <!-- Parametros especificos do robo Caramelo -->
     <xacro:property name="base_mass" value="22.0"/>
-    <xacro:property name="base_height" value="0.105"/>
-    <xacro:property name="base_width_vertical" value="0.550"/>
+    <!-- Medidas do chassi sem considerar o apendice frontal do LiDAR. -->
+    <xacro:property name="base_height" value="0.156"/>
+    <xacro:property name="base_width_vertical" value="0.535"/>
     <xacro:property name="base_depth_vertical" value="0.210"/>
-    <xacro:property name="base_width_horizontal" value="0.330"/>
+    <xacro:property name="base_width_horizontal" value="0.316"/>
     <xacro:property name="base_depth_horizontal" value="0.320"/>
+    <xacro:property name="chassis_bottom_from_floor" value="0.018"/>
+    <xacro:property name="base_link_z_from_floor" value="${chassis_bottom_from_floor + base_height/2.0}"/>
+    <xacro:property name="base_appendage_x" value="0.108"/>
+    <!-- Referencia antiga usada para manter sensores na mesma altura absoluta apos mover o base_link. -->
+    <xacro:property name="old_base_link_z_from_floor" value="0.030"/>
 
     <xacro:property name="wheel_radius" value="0.05"/>
     <xacro:property name="wheel_width" value="0.069"/>
     <xacro:property name="wheel_mass" value="3.0"/>
-    <xacro:property name="wheel_separation" value="0.310"/>
-    <xacro:property name="wheel_base" value="0.470"/>
-    <xacro:property name="front_wheel_x" value="0.182"/>
-    <xacro:property name="back_wheel_x" value="-0.290"/>
-    <xacro:property name="left_wheel_y" value="0.145"/>
-    <xacro:property name="right_wheel_y" value="-0.145"/>
-    <xacro:property name="wheel_z" value="0.034"/>
-    <xacro:property name="base_mesh_xyz" value="-0.011611 -0.243518 -0.08"/>
+    <!-- AJUSTAR_NO_ROBO: conferir posicao real das rodas e offset do STL no robo montado. -->
+    <xacro:property name="wheel_separation" value="0.290"/>
+    <xacro:property name="wheel_base" value="0.472"/>
+    <xacro:property name="wheel_center_x" value="0.000"/>
+    <xacro:property name="wheel_z" value="${wheel_radius - base_link_z_from_floor}"/>
+    <!-- FRAME_CRITICO: offsets medidos do STL ja com a rotacao de 90 graus aplicada abaixo. -->
+    <xacro:property name="base_mesh_stl_center_x" value="0.243517868"/>
+    <xacro:property name="base_mesh_stl_center_y" value="-0.011611206"/>
+    <xacro:property name="base_mesh_stl_min_z" value="0.080840126"/>
+    <xacro:property name="base_mesh_xyz" value="${base_appendage_x/2.0 + base_mesh_stl_center_y} ${-base_mesh_stl_center_x} ${-(base_height/2.0 + base_mesh_stl_min_z)}"/>
     <xacro:property name="base_mesh_rpy" value="0 0 ${M_PI/2}"/>
-    <xacro:property name="lidar_x" value="0.265"/>
+    <!-- FRAME_CRITICO: manter o frame publicado pelo driver do LiDAR igual ao rplidar_s2.yaml. -->
+    <xacro:property name="lidar_x" value="${0.265 + base_appendage_x/2.0}"/>
     <xacro:property name="lidar_y" value="0.000"/>
-    <xacro:property name="lidar_z" value="${base_height + 0.05 - 0.125}"/>
+    <xacro:property name="lidar_z" value="${old_base_link_z_from_floor + 0.030 - base_link_z_from_floor}"/>
     <xacro:property name="lidar_rpy" value="${M_PI} 0 ${M_PI}"/>
-    <xacro:property name="imu_x" value="-0.035"/>
+    <!-- FRAME_CRITICO: hardware_bringup publica a IMU como imu_link. -->
+    <xacro:property name="imu_x" value="${-0.035 + base_appendage_x/2.0}"/>
     <xacro:property name="imu_y" value="0.000"/>
-    <xacro:property name="imu_z" value="${base_height + 0.05 - 0.065}"/>
+    <xacro:property name="imu_z" value="${old_base_link_z_from_floor + 0.090 - base_link_z_from_floor}"/>
     <xacro:property name="imu_rpy" value="0 0 0"/>
 
     <!-- Base completa: footprint + base_link + 4 rodas mecanum -->
@@ -44,7 +54,7 @@
         <visual>
             <origin xyz="${base_mesh_xyz}" rpy="${base_mesh_rpy}"/>
             <geometry>
-                <mesh filename="package://caramelo_description/urdf/meshes/montagem_robo_final.stl" scale="0.001 0.001 0.001"/>
+                <mesh filename="package://caramelo_description/meshes/robot_3d/montagem_robo_final.stl" scale="0.001 0.001 0.001"/>
             </geometry>
             <material name="darkgray"/>
         </visual>
@@ -53,7 +63,7 @@
         <collision>
             <origin xyz="${base_mesh_xyz}" rpy="${base_mesh_rpy}"/>
             <geometry>
-                <mesh filename="package://caramelo_description/urdf/meshes/montagem_robo_final.stl" scale="0.001 0.001 0.001"/>
+                <mesh filename="package://caramelo_description/meshes/robot_3d/montagem_robo_final.stl" scale="0.001 0.001 0.001"/>
             </geometry>
         </collision>
 
@@ -63,7 +73,7 @@
             x="${base_width_vertical}"
             y="${base_width_horizontal}"
             z="${base_height}"
-            o_xyz="0 0 ${base_height/2.0}"
+            o_xyz="0 0 0"
             o_rpy="0 0 0"/>
 
     </link>
@@ -72,32 +82,33 @@
     <joint name="${prefix}base_joint" type="fixed">
         <parent link="${prefix}base_footprint"/>
         <child link="${prefix}base_link"/>
-        <origin xyz="0 0 ${wheel_radius - 0.02}" rpy="0 0 0"/>
+        <origin xyz="0 0 ${base_link_z_from_floor}" rpy="0 0 0"/>
     </joint>
 
     <!-- Quatro rodas mecanum -->
     <xacro:mecanum_wheel 
         prefix="${prefix}" 
         side="front_left" 
-        wheel_xyz="${front_wheel_x} ${left_wheel_y} ${wheel_z}"/>
+        x_reflect="1" 
+        y_reflect="1"/>
 
     <xacro:mecanum_wheel 
         prefix="${prefix}" 
         side="front_right" 
-        wheel_xyz="${front_wheel_x} ${right_wheel_y} ${wheel_z}"
-        wheel_rpy="${-M_PI/2} 0 0"/>
-        
+        x_reflect="1" 
+        y_reflect="-1"/>
 
     <xacro:mecanum_wheel 
         prefix="${prefix}" 
         side="back_left" 
-        wheel_xyz="${back_wheel_x} ${left_wheel_y} ${wheel_z}"
-        wheel_rpy="${-M_PI/2} 0 0"/>
+        x_reflect="-1" 
+        y_reflect="1"/>
 
     <xacro:mecanum_wheel 
         prefix="${prefix}" 
         side="back_right" 
-        wheel_xyz="${back_wheel_x} ${right_wheel_y} ${wheel_z}"/>
+        x_reflect="-1" 
+        y_reflect="-1"/>
 
     <!-- Lidar no bico, preso direto na base -->
     <xacro:lidar_sensor

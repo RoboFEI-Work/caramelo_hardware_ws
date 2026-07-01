@@ -2,13 +2,13 @@
 
     <let
         name="urdf_path"
-        value="$(find-pkg-share manip_description)/urdf/manip.urdf.xacro"/>
+        value="$(find-pkg-share caramelo_description)/urdf/robots/manipulator.urdf.xacro"/>
 
     <let name="rviz_config_path"
-        value="$(find-pkg-share manip_bringup)/config/manip_moveit.rviz"/>
+        value="$(find-pkg-share raspberry_bringup)/config/manip_moveit.rviz"/>
 
             <arg name="use_mock_components" default="true"/>
-            <arg name="launch_realsense" default="false"/>
+            <arg name="launch_realsense" default="true"/>
             <arg name="launch_apriltag" default="false"/>
             <arg name="launch_pick_action" default="true"/>
             <arg name="launch_place_action" default="true"/>
@@ -28,7 +28,7 @@
           <param
             name="robot_description"
                                     value="$(command 'xacro $(var urdf_path) use_mock_components:=$(var use_mock_components) use_realsense:=$(var launch_realsense)')"/>
-          <param from="$(find-pkg-share manip_bringup)/config/ros2_controllers.yaml"/>
+          <param from="$(find-pkg-share raspberry_bringup)/config/manip_ros2_controllers.yaml"/>
     </node>
 
     <node pkg="controller_manager" exec="spawner" output="screen"
@@ -43,16 +43,6 @@
             <include file="$(find-pkg-share manip_moveit_config)/launch/move_group.launch.py">
                   <arg name="capabilities" value="move_group/ExecuteTaskSolutionCapability"/>
             </include>
-
-            <group if="$(var launch_realsense)">
-                  <include file="$(find-pkg-share realsense2_camera)/launch/rs_launch.py">
-                        <arg name="camera_name" value="camera"/>
-                        <arg name="align_depth.enable" value="true"/>
-                        <arg name="pointcloud.enable" value="true"/>
-                        <arg name="enable_color" value="true"/>
-                        <arg name="enable_depth" value="true"/>
-                  </include>
-            </group>
 
             <group if="$(var launch_apriltag)">
                   <node pkg="apriltag_ros" exec="apriltag_node" output="screen">

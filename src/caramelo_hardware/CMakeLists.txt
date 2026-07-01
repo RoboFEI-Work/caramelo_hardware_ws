@@ -12,6 +12,7 @@ find_package(hardware_interface REQUIRED)
 find_package(pal_statistics REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(dynamixel_sdk REQUIRED)
 
 include(CheckIncludeFileCXX)
 check_include_file_cxx(pigpiod_if2.h HAVE_PIGPIOD_IF2_H)
@@ -24,6 +25,7 @@ include_directories(include)
 add_library(
   ${PROJECT_NAME}
   SHARED
+  src/arm_hw_interface.cpp
   src/mobile_base_hw_interface.cpp
   src/maxon_motors_node.cpp
 )
@@ -36,6 +38,7 @@ ament_target_dependencies(
   pal_statistics
   pluginlib
   std_msgs
+  dynamixel_sdk
 )
 
 if(HAVE_PIGPIOD_IF2_H AND HAVE_PIGPIO_H AND PIGPIOD_IF2_LIB)
@@ -75,7 +78,7 @@ ament_export_dependencies(
   pal_statistics
   pluginlib
   std_msgs
+  dynamixel_sdk
 )
 
 ament_package()
-

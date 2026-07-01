@@ -6,7 +6,7 @@
     prefix:=''
     parent:='base_link'
     frame_id:='laser_frame'
-    mesh_file:='file://$(find caramelo_description)/urdf/meshes/rplidar_s2.stl'
+    mesh_file:='package://caramelo_description/meshes/rplidar/rplidar_s2.stl'
     xyz_offset:='0 0 0.0825'
     rpy_offset:='0 0 0'
     mesh_xyz_offset:='0 0 0'

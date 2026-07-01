@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<robot name="manip" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:arg name="use_realsense" default="true"/>
+  <xacro:arg name="use_mock_components" default="true"/>
+
+  <xacro:include filename="../materials.xacro"/>
+  <xacro:include filename="../mech/manipulator_arm.xacro"/>
+  <xacro:include filename="../mech/manipulator_gripper.xacro"/>
+  <xacro:include filename="../control/manipulator.ros2_control.xacro"/>
+
+  <xacro:manipulator_ros2_control use_mock_components="$(arg use_mock_components)"/>
+
+  <xacro:manip_arm base_link_name="base_link" use_realsense="$(arg use_realsense)"/>
+  <xacro:manip_gripper/>
+
+  <joint name="gripper_base_joint" type="fixed">
+    <parent link="link5"/>
+    <child link="gripper_base_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+</robot>

@@ -1,6 +1,8 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
+    <xacro:macro name="manip_gripper">
+
     <link name="gripper_base_link">
     <visual>
         <geometry>
@@ -18,7 +20,7 @@
 
     <visual>
         <geometry>
-        <mesh filename="package://manip_description/meshes/left_finger.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/left_finger.stl" scale="0.001 0.001 0.001"/>
         </geometry>
         <origin xyz="-0.0252 0 -0.58444" rpy="0 0 0"/>
         <material name="grey">
@@ -28,7 +30,7 @@
 
     <collision>
         <geometry>
-        <mesh filename="package://manip_description/meshes/left_finger.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/left_finger.stl" scale="0.001 0.001 0.001"/>
         </geometry>
         <origin xyz="-0.0252 0 -0.58444" rpy="0 0 0"/>
     </collision>
@@ -53,7 +55,7 @@
 
     <visual>
         <geometry>
-        <mesh filename="package://manip_description/meshes/right_finger.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/right_finger.stl" scale="0.001 0.001 0.001"/>
         </geometry>
         <origin xyz="0.0252 0 -0.58444" rpy="0 0 0"/>
         <material name="grey"/>
@@ -61,7 +63,7 @@
 
     <collision>
         <geometry>
-        <mesh filename="package://manip_description/meshes/right_finger.stl" scale="0.001 0.001 0.001"/>
+        <mesh filename="package://caramelo_description/meshes/manipulator/right_finger.stl" scale="0.001 0.001 0.001"/>
         </geometry>
         <origin xyz="0.0252 0 -0.58444" rpy="0 0 0"/>
     </collision>
@@ -81,5 +83,7 @@
     <axis xyz="0 -1 0"/>
     <limit lower="-1.0" upper="1.0" effort="1" velocity="5"/>
     </joint>
+
+    </xacro:macro>
 
 </robot>

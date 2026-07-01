@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-    <xacro:include filename="lidar_sensor.xacro"/>
-    <xacro:include filename="imu.urdf.xacro"/>
+    <xacro:include filename="../sensors/lidar_sensor.xacro"/>
+    <xacro:include filename="../sensors/imu.urdf.xacro"/>
 
     <xacro:property name="plate_x" value="0.315"/>
     <xacro:property name="plate_y" value="0.30"/>
