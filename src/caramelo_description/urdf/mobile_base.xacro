@@ -2,7 +2,8 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
     <xacro:include filename="mecanum_wheel.xacro"/>
-    <xacro:include filename="base_tophat.xacro"/>
+    <xacro:include filename="lidar_sensor.xacro"/>
+    <xacro:include filename="imu.urdf.xacro"/>
     
 
     <!-- Parametros especificos do robo Caramelo -->
@@ -18,39 +19,41 @@
     <xacro:property name="wheel_mass" value="3.0"/>
     <xacro:property name="wheel_separation" value="0.310"/>
     <xacro:property name="wheel_base" value="0.470"/>
+    <xacro:property name="front_wheel_x" value="0.182"/>
+    <xacro:property name="back_wheel_x" value="-0.290"/>
+    <xacro:property name="left_wheel_y" value="0.145"/>
+    <xacro:property name="right_wheel_y" value="-0.145"/>
+    <xacro:property name="wheel_z" value="0.034"/>
+    <xacro:property name="base_mesh_xyz" value="-0.011611 -0.243518 -0.08"/>
+    <xacro:property name="base_mesh_rpy" value="0 0 ${M_PI/2}"/>
+    <xacro:property name="lidar_x" value="0.265"/>
+    <xacro:property name="lidar_y" value="0.000"/>
+    <xacro:property name="lidar_z" value="${base_height + 0.05 - 0.125}"/>
+    <xacro:property name="lidar_rpy" value="${M_PI} 0 ${M_PI}"/>
+    <xacro:property name="imu_x" value="-0.035"/>
+    <xacro:property name="imu_y" value="0.000"/>
+    <xacro:property name="imu_z" value="${base_height + 0.05 - 0.065}"/>
+    <xacro:property name="imu_rpy" value="0 0 0"/>
 
     <!-- Base completa: footprint + base_link + 4 rodas mecanum -->
     <xacro:macro name="mobile_base" params="prefix">
     <link name="${prefix}base_footprint"/>
 
     <link name="${prefix}base_link">
-        <!-- Corpo principal em cruz (duas caixas visuais) -->
+        <!-- Corpo principal do robo -->
         <visual>
-            <origin xyz="0 0 ${base_height/2.0}" rpy="0 0 0"/>
+            <origin xyz="${base_mesh_xyz}" rpy="${base_mesh_rpy}"/>
             <geometry>
-                <box size="${base_width_vertical} ${base_depth_vertical} ${base_height}"/>
-            </geometry>
-            <material name="darkgray"/>
-        </visual>
-        <visual>
-            <origin xyz="0 0 ${base_height/2.0}" rpy="0 0 0"/>
-            <geometry>
-                <box size="${base_depth_horizontal} ${base_width_horizontal} ${base_height}"/>
+                <mesh filename="package://caramelo_description/urdf/meshes/montagem_robo_final.stl" scale="0.001 0.001 0.001"/>
             </geometry>
             <material name="darkgray"/>
         </visual>
 
-        <!-- Colisao em cruz para casar com a geometria visual -->
+        <!-- Colisao do corpo principal -->
         <collision>
-            <origin xyz="0 0 ${base_height/2.0}" rpy="0 0 0"/>
+            <origin xyz="${base_mesh_xyz}" rpy="${base_mesh_rpy}"/>
             <geometry>
-                <box size="${base_width_vertical} ${base_depth_vertical} ${base_height}"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0 0 ${base_height/2.0}" rpy="0 0 0"/>
-            <geometry>
-                <box size="${base_depth_horizontal} ${base_width_horizontal} ${base_height}"/>
+                <mesh filename="package://caramelo_description/urdf/meshes/montagem_robo_final.stl" scale="0.001 0.001 0.001"/>
             </geometry>
         </collision>
 
@@ -76,31 +79,41 @@
     <xacro:mecanum_wheel 
         prefix="${prefix}" 
         side="front_left" 
-        x_reflect="1" 
-        y_reflect="1"/>
+        wheel_xyz="${front_wheel_x} ${left_wheel_y} ${wheel_z}"/>
 
     <xacro:mecanum_wheel 
         prefix="${prefix}" 
         side="front_right" 
-        x_reflect="1" 
-        y_reflect="-1"/>
+        wheel_xyz="${front_wheel_x} ${right_wheel_y} ${wheel_z}"
+        wheel_rpy="${-M_PI/2} 0 0"/>
+        
 
     <xacro:mecanum_wheel 
         prefix="${prefix}" 
         side="back_left" 
-        x_reflect="-1" 
-        y_reflect="1"/>
+        wheel_xyz="${back_wheel_x} ${left_wheel_y} ${wheel_z}"
+        wheel_rpy="${-M_PI/2} 0 0"/>
 
     <xacro:mecanum_wheel 
         prefix="${prefix}" 
         side="back_right" 
-        x_reflect="-1" 
-        y_reflect="-1"/>
+        wheel_xyz="${back_wheel_x} ${right_wheel_y} ${wheel_z}"/>
 
-    <!-- Top hat on top of base -->
-    <xacro:base_tophat 
-        prefix="${prefix}" 
-        parent="${prefix}base_link" />
+    <!-- Lidar no bico, preso direto na base -->
+    <xacro:lidar_sensor
+        prefix="${prefix}"
+        parent="${prefix}base_link"
+        frame_id="laser_frame"
+        xyz_offset="${lidar_x} ${lidar_y} ${lidar_z}"
+        rpy_offset="${lidar_rpy}"/>
+
+    <!-- IMU presa direto na base -->
+    <xacro:imu_sensor
+        prefix="${prefix}"
+        parent="${prefix}base_link"
+        frame_id="imu"
+        xyz_offset="${imu_x} ${imu_y} ${imu_z}"
+        rpy_offset="${imu_rpy}"/>
 
     
 

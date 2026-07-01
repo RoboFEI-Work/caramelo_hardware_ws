@@ -2,22 +2,20 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
     <!-- Macro de uma roda mecanum -->
-    <xacro:macro name="mecanum_wheel" params="prefix side wheel_xyz wheel_rpy:='${M_PI/2} 0 0'">
+    <xacro:macro name="mecanum_wheel" params="prefix side x_reflect y_reflect">
         <link name="${prefix}${side}_wheel_link">
             <visual>
-                <origin xyz="0 0 0" rpy="${wheel_rpy}"/>
+                <origin xyz="0 0 0" rpy="${M_PI/2} 0 0"/>
                 <geometry>
-                    <mesh filename="package://caramelo_description/urdf/meshes/roda_escala_final.stl" scale="0.001 0.001 0.001"/>
-                    <!--<cylinder radius="${wheel_radius}" length="${wheel_width}"/>-->
+                    <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
                 </geometry>
                 <material name="orange"/>
             </visual>
 
             <collision>
-                <origin xyz="0 0 0" rpy="${wheel_rpy}"/>
+                <origin xyz="0 0 0" rpy="${M_PI/2} 0 0"/>
                 <geometry>
-                    <mesh filename="package://caramelo_description/urdf/meshes/roda_escala_final.stl" scale="0.001 0.001 0.001"/> 
-                    <!--<cylinder radius="${wheel_radius}" length="${wheel_width}"/>-->
+                    <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
                 </geometry>
             </collision>
 
@@ -30,7 +28,7 @@
             <axis xyz="0 1 0"/>
             <parent link="${prefix}base_link"/>
             <child link="${prefix}${side}_wheel_link"/>
-            <origin xyz="${wheel_xyz}" rpy="0 0 0"/>
+            <origin xyz="${x_reflect*(wheel_base/2)} ${y_reflect*(wheel_separation/2)} 0.02" rpy="0 0 0"/>
         </joint>
         
     </xacro:macro>

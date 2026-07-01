@@ -18,7 +18,7 @@
                 <param name="manip_joint5_motor_id">5</param>
                 <param name="manip_joint6_motor_id">6</param>
                 <param name="manip_joint7_motor_id">7</param>
-                <param name="dynamixel_port">/dev/ttyUSB0</param>
+                <param name="dynamixel_port">/dev/ttyUSB2</param>
                 <!-- Ajuste por calibração para maior precisão de torque. -->
                 <param name="torque_constant_nm_per_amp">2.4</param>
             </xacro:unless>

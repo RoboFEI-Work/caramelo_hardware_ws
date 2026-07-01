@@ -14,10 +14,6 @@
     <xacro:property name="leg_z" value="-${leg_height/2}"/>
     <xacro:property name="tophat_mass" value="1.0"/>
     <xacro:property name="tophat_inertia_height" value="${plate_z + leg_height}"/>
-    <xacro:property name="lidar_x" value="0.245"/>
-    <xacro:property name="lidar_y" value="0.000"/>
-    <xacro:property name="lidar_z" value="-0.100"/>
-    <xacro:property name="lidar_rpy" value="${M_PI} 0 ${M_PI}"/>
 
     <!-- Macro para descrever a plataforma top hat -->
     <xacro:macro name="base_tophat" params="prefix='' parent='base_link'">
@@ -105,13 +101,13 @@
             <origin xyz="0 0 ${base_height + 0.05}" rpy="0 0 0"/>
         </joint>
 
-        <!-- Lidar no bico, apontado para baixo -->
+        <!-- Lidar no centro (0 0) -->
         <xacro:lidar_sensor 
             prefix="${prefix}" 
             parent="${prefix}base_tophat_link" 
             frame_id="laser_frame" 
-            xyz_offset="${lidar_x} ${lidar_y} ${lidar_z}" 
-            rpy_offset="${lidar_rpy}"/>
+            xyz_offset="0 0 0.02" 
+            rpy_offset="0 0 3.141592653589793"/>
 
         <!-- IMU em 0.10 0 -->
         <xacro:imu_sensor 
