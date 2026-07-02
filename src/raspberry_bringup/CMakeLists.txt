@@ -11,7 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
 
 install(
-  DIRECTORY config launch
+  DIRECTORY config launch scripts
   DESTINATION share/${PROJECT_NAME}/
 )
 

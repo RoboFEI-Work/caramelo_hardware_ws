@@ -27,7 +27,7 @@
     <xacro:property name="wheel_separation" value="0.290"/>
     <xacro:property name="wheel_base" value="0.472"/>
     <xacro:property name="wheel_center_x" value="0.000"/>
-    <xacro:property name="wheel_z" value="${wheel_radius - base_link_z_from_floor}"/>
+    <xacro:property name="wheel_z" value="${wheel_radius - base_link_z_from_floor +0.001}"/>
     <!-- FRAME_CRITICO: offsets medidos do STL ja com a rotacao de 90 graus aplicada abaixo. -->
     <xacro:property name="base_mesh_stl_center_x" value="0.243517868"/>
     <xacro:property name="base_mesh_stl_center_y" value="-0.011611206"/>
@@ -37,35 +37,66 @@
     <!-- FRAME_CRITICO: manter o frame publicado pelo driver do LiDAR igual ao rplidar_s2.yaml. -->
     <xacro:property name="lidar_x" value="${0.265 + base_appendage_x/2.0}"/>
     <xacro:property name="lidar_y" value="0.000"/>
-    <xacro:property name="lidar_z" value="${old_base_link_z_from_floor + 0.030 - base_link_z_from_floor}"/>
+    <xacro:property name="lidar_z" value="${old_base_link_z_from_floor + 0.030 - base_link_z_from_floor - 0.015}"/>
     <xacro:property name="lidar_rpy" value="${M_PI} 0 ${M_PI}"/>
     <!-- FRAME_CRITICO: hardware_bringup publica a IMU como imu_link. -->
     <xacro:property name="imu_x" value="${-0.035 + base_appendage_x/2.0}"/>
     <xacro:property name="imu_y" value="0.000"/>
-    <xacro:property name="imu_z" value="${old_base_link_z_from_floor + 0.090 - base_link_z_from_floor}"/>
+    <xacro:property name="imu_z" value="${old_base_link_z_from_floor + 0.090 - base_link_z_from_floor - 0.015}"/>
     <xacro:property name="imu_rpy" value="0 0 0"/>
 
     <!-- Base completa: footprint + base_link + 4 rodas mecanum -->
-    <xacro:macro name="mobile_base" params="prefix">
+    <xacro:macro name="mobile_base" params="
+        prefix
+        visual_mode:='package'
+        mesh_uri_prefix:='package://caramelo_description'">
     <link name="${prefix}base_footprint"/>
 
     <link name="${prefix}base_link">
         <!-- Corpo principal do robo -->
-        <visual>
-            <origin xyz="${base_mesh_xyz}" rpy="${base_mesh_rpy}"/>
-            <geometry>
-                <mesh filename="package://caramelo_description/meshes/robot_3d/montagem_robo_final.stl" scale="0.001 0.001 0.001"/>
-            </geometry>
-            <material name="darkgray"/>
-        </visual>
+        <xacro:if value="${visual_mode == 'primitive'}">
+            <visual>
+                <origin xyz="0 0 0" rpy="0 0 0"/>
+                <geometry>
+                    <box size="${base_width_vertical} ${base_width_horizontal} ${base_height}"/>
+                </geometry>
+                <material name="darkgray"/>
+            </visual>
+            <visual>
+                <origin xyz="${base_width_vertical/2.0 + base_appendage_x/2.0} 0 0" rpy="0 0 0"/>
+                <geometry>
+                    <box size="${base_appendage_x} ${base_width_horizontal*0.70} ${base_height*0.45}"/>
+                </geometry>
+                <material name="darkgray"/>
+            </visual>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+            <visual>
+                <origin xyz="${base_mesh_xyz}" rpy="${base_mesh_rpy}"/>
+                <geometry>
+                    <mesh filename="${mesh_uri_prefix}/meshes/robot_3d/montagem_robo_final.stl" scale="0.001 0.001 0.001"/>
+                </geometry>
+                <material name="darkgray"/>
+            </visual>
+        </xacro:if>
 
         <!-- Colisao do corpo principal -->
-        <collision>
-            <origin xyz="${base_mesh_xyz}" rpy="${base_mesh_rpy}"/>
-            <geometry>
-                <mesh filename="package://caramelo_description/meshes/robot_3d/montagem_robo_final.stl" scale="0.001 0.001 0.001"/>
-            </geometry>
-        </collision>
+        <xacro:if value="${visual_mode == 'primitive'}">
+            <collision>
+                <origin xyz="0 0 0" rpy="0 0 0"/>
+                <geometry>
+                    <box size="${base_width_vertical} ${base_width_horizontal} ${base_height}"/>
+                </geometry>
+            </collision>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+            <collision>
+                <origin xyz="${base_mesh_xyz}" rpy="${base_mesh_rpy}"/>
+                <geometry>
+                    <mesh filename="${mesh_uri_prefix}/meshes/robot_3d/montagem_robo_final.stl" scale="0.001 0.001 0.001"/>
+                </geometry>
+            </collision>
+        </xacro:if>
 
         <!-- Inercia aproximada por caixa envolvente da base -->
         <xacro:box_inertia
@@ -90,25 +121,33 @@
         prefix="${prefix}" 
         side="front_left" 
         x_reflect="1" 
-        y_reflect="1"/>
+        y_reflect="1"
+        visual_mode="${visual_mode}"
+        wheel_mesh="${mesh_uri_prefix}/meshes/robot_3d/roda_escala_final.stl"/>
 
     <xacro:mecanum_wheel 
         prefix="${prefix}" 
         side="front_right" 
         x_reflect="1" 
-        y_reflect="-1"/>
+        y_reflect="-1"
+        visual_mode="${visual_mode}"
+        wheel_mesh="${mesh_uri_prefix}/meshes/robot_3d/roda_escala_final.stl"/>
 
     <xacro:mecanum_wheel 
         prefix="${prefix}" 
         side="back_left" 
         x_reflect="-1" 
-        y_reflect="1"/>
+        y_reflect="1"
+        visual_mode="${visual_mode}"
+        wheel_mesh="${mesh_uri_prefix}/meshes/robot_3d/roda_escala_final.stl"/>
 
     <xacro:mecanum_wheel 
         prefix="${prefix}" 
         side="back_right" 
         x_reflect="-1" 
-        y_reflect="-1"/>
+        y_reflect="-1"
+        visual_mode="${visual_mode}"
+        wheel_mesh="${mesh_uri_prefix}/meshes/robot_3d/roda_escala_final.stl"/>
 
     <!-- Lidar no bico, preso direto na base -->
     <xacro:lidar_sensor
@@ -116,7 +155,9 @@
         parent="${prefix}base_link"
         frame_id="laser_frame"
         xyz_offset="${lidar_x} ${lidar_y} ${lidar_z}"
-        rpy_offset="${lidar_rpy}"/>
+        rpy_offset="${lidar_rpy}"
+        visual_mode="${visual_mode}"
+        mesh_file="${mesh_uri_prefix}/meshes/rplidar/rplidar_s2.stl"/>
 
     <!-- IMU presa direto na base -->
     <xacro:imu_sensor

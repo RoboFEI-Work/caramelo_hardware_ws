@@ -10,23 +10,45 @@
         side
         x_reflect
         y_reflect
+        visual_mode:='package'
         wheel_mesh:='${mecanum_wheel_mesh}'
         wheel_mesh_scale:='${mecanum_wheel_mesh_scale}'">
         <link name="${prefix}${side}_wheel_link">
-            <visual>
-                <origin xyz="0 0 0" rpy="${M_PI/2 if x_reflect == y_reflect else -M_PI/2} 0 0"/>
-                <geometry>
-                    <mesh filename="${wheel_mesh}" scale="${wheel_mesh_scale}"/>
-                </geometry>
-                <material name="orange"/>
-            </visual>
+            <xacro:if value="${visual_mode == 'primitive'}">
+                <visual>
+                    <origin xyz="0 0 0" rpy="${M_PI/2} 0 0"/>
+                    <geometry>
+                        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+                    </geometry>
+                    <material name="orange"/>
+                </visual>
+            </xacro:if>
+            <xacro:if value="${visual_mode != 'primitive'}">
+                <visual>
+                    <origin xyz="0 0 0" rpy="${M_PI/2 if x_reflect == y_reflect else -M_PI/2} 0 0"/>
+                    <geometry>
+                        <mesh filename="${wheel_mesh}" scale="${wheel_mesh_scale}"/>
+                    </geometry>
+                    <material name="orange"/>
+                </visual>
+            </xacro:if>
 
-            <collision>
-                <origin xyz="0 0 0" rpy="${M_PI/2 if x_reflect == y_reflect else -M_PI/2} 0 0"/>
-                <geometry>
-                    <mesh filename="${wheel_mesh}" scale="${wheel_mesh_scale}"/> 
-                </geometry>
-            </collision>
+            <xacro:if value="${visual_mode == 'primitive'}">
+                <collision>
+                    <origin xyz="0 0 0" rpy="${M_PI/2} 0 0"/>
+                    <geometry>
+                        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+                    </geometry>
+                </collision>
+            </xacro:if>
+            <xacro:if value="${visual_mode != 'primitive'}">
+                <collision>
+                    <origin xyz="0 0 0" rpy="${M_PI/2 if x_reflect == y_reflect else -M_PI/2} 0 0"/>
+                    <geometry>
+                        <mesh filename="${wheel_mesh}" scale="${wheel_mesh_scale}"/> 
+                    </geometry>
+                </collision>
+            </xacro:if>
 
             <xacro:cylinder_inertia m="${wheel_mass}" r="${wheel_radius}" l="${wheel_width}" o_xyz="0 0 0" o_rpy="${M_PI/2} 0 0"/>
 

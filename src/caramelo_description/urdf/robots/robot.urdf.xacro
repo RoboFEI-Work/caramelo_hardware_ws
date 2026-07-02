@@ -7,8 +7,10 @@
   <xacro:arg name="use_manipulator" default="true"/>
   <xacro:arg name="use_realsense" default="true"/>
   <xacro:arg name="use_mock_components" default="true"/>
-  <xacro:arg name="manip_mount_xyz" default="0.185 0 0.078"/>
+  <xacro:arg name="manip_mount_xyz" default="0.217 0 0.083"/>
   <xacro:arg name="manip_mount_rpy" default="0 0 0"/>
+  <xacro:arg name="visual_mode" default="package"/>
+  <xacro:arg name="mesh_uri_prefix" default="package://caramelo_description"/>
 
   <!-- Includes -->
   <xacro:include filename="../materials.xacro"/>
@@ -18,7 +20,10 @@
   <xacro:include filename="../mech/caramelo_manipulator.xacro"/>
 
   <!-- Base movel completa (base_link + footprint + 4 rodas) -->
-  <xacro:mobile_base prefix="$(arg prefix)"/>
+  <xacro:mobile_base
+    prefix="$(arg prefix)"
+    visual_mode="$(arg visual_mode)"
+    mesh_uri_prefix="$(arg mesh_uri_prefix)"/>
 
   <xacro:if value="$(arg use_manipulator)">
     <xacro:caramelo_manipulator
@@ -26,7 +31,9 @@
       parent="$(arg prefix)base_link"
       use_realsense="$(arg use_realsense)"
       manip_mount_xyz="$(arg manip_mount_xyz)"
-      manip_mount_rpy="$(arg manip_mount_rpy)"/>
+      manip_mount_rpy="$(arg manip_mount_rpy)"
+      visual_mode="$(arg visual_mode)"
+      mesh_uri_prefix="$(arg mesh_uri_prefix)"/>
     <xacro:manipulator_ros2_control use_mock_components="$(arg use_mock_components)"/>
   </xacro:if>
 

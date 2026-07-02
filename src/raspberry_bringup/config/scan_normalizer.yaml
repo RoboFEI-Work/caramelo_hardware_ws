@@ -1,0 +1,16 @@
+scan_normalizer:
+  ros__parameters:
+    input_scan_topic: /scan_raw
+    output_scan_topic: /scan
+
+    # 180 degree field of view centered on laser_frame -X.
+    # This keeps the rear half-plane: +90 deg through +270 deg.
+    angle_min: 1.57079632679
+    angle_max: 4.71238898038
+
+    # 0 learns the output beam count from the first scan and the angular crop.
+    target_count: 0
+    range_min: 0.0
+    range_max: 30.0
+    fill_with_inf: true
+    keep_intensities: true

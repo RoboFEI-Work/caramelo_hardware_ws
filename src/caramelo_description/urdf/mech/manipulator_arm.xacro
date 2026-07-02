@@ -3,21 +3,35 @@
 
   <xacro:include filename="../sensors/rgbd_camera.urdf.xacro"/>
 
-  <xacro:macro name="manip_arm" params="base_link_name:='base_link' use_realsense:=true">
+  <xacro:macro name="manip_arm" params="
+    base_link_name:='base_link'
+    use_realsense:=true
+    visual_mode:='package'
+    mesh_uri_prefix:='package://caramelo_description'">
 
   <!-- ================= BASE ================= -->
 
   <link name="${base_link_name}">
     <visual>
       <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/base_link.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+          <cylinder radius="0.065" length="0.055"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+          <mesh filename="${mesh_uri_prefix}/meshes/manipulator/base_link.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
       </geometry>
       <origin xyz="0 0 0" rpy="0 0 0"/>
     </visual>
 
     <collision>
       <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/base_link.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+          <cylinder radius="0.065" length="0.055"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+          <mesh filename="${mesh_uri_prefix}/meshes/manipulator/base_link.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
       </geometry>
       <origin xyz="0 0 0" rpy="0 0 0"/>
     </collision>
@@ -37,7 +51,12 @@
 
     <visual>
       <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/link1.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+          <cylinder radius="0.045" length="0.100"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+          <mesh filename="${mesh_uri_prefix}/meshes/manipulator/link1.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
       </geometry>
       <origin xyz="0 0 0.0" rpy="0 0 0"/>
       <material name="red">
@@ -47,7 +66,12 @@
 
     <collision>
       <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/link1.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+          <cylinder radius="0.045" length="0.100"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+          <mesh filename="${mesh_uri_prefix}/meshes/manipulator/link1.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
       </geometry>
       <origin xyz="0 0 0.0" rpy="0 0 0"/>
     </collision>
@@ -68,7 +92,12 @@
 
     <visual>
       <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/link2.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+          <box size="0.055 0.055 0.185"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+          <mesh filename="${mesh_uri_prefix}/meshes/manipulator/link2.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
       </geometry>
       <origin xyz="0 0 -0.09775" rpy="0 0 0"/>
       <material name="green">
@@ -78,7 +107,12 @@
 
     <collision>
       <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/link2.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+          <box size="0.055 0.055 0.185"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+          <mesh filename="${mesh_uri_prefix}/meshes/manipulator/link2.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
       </geometry>
       <origin xyz="0 0 -0.09775" rpy="0 0 0"/>
     </collision>
@@ -99,7 +133,12 @@
 
     <visual>
       <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/link3.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+          <box size="0.050 0.050 0.205"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+          <mesh filename="${mesh_uri_prefix}/meshes/manipulator/link3.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
       </geometry>
       <origin xyz="0 0 -0.28275" rpy="0 0 0"/>
       <material name="blue">
@@ -109,7 +148,12 @@
 
     <collision>
       <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/link3.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+          <box size="0.050 0.050 0.205"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+          <mesh filename="${mesh_uri_prefix}/meshes/manipulator/link3.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
       </geometry>
       <origin xyz="0 0 -0.28275" rpy="0 0 0"/>
     </collision>
@@ -130,7 +174,12 @@
 
     <visual>
       <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/link4.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+          <box size="0.050 0.050 0.160"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+          <mesh filename="${mesh_uri_prefix}/meshes/manipulator/link4.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
       </geometry>
       <origin xyz="0 0 -0.48775" rpy="0 0 3.14"/>
       <material name="yellow">
@@ -140,7 +189,12 @@
 
     <collision>
       <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/link4.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+          <box size="0.050 0.050 0.160"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+          <mesh filename="${mesh_uri_prefix}/meshes/manipulator/link4.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
       </geometry>
       <origin xyz="0 0 -0.48775" rpy="0 0 0"/>
     </collision>
@@ -161,7 +215,12 @@
 
     <visual>
       <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/link5.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+          <cylinder radius="0.035" length="0.080"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+          <mesh filename="${mesh_uri_prefix}/meshes/manipulator/link5.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
       </geometry>
       <origin xyz="0 0 -0.5659" rpy="0.0 0 0"/>
       <material name="cyan">
@@ -171,7 +230,12 @@
 
     <collision>
       <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/link5.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+          <cylinder radius="0.035" length="0.080"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+          <mesh filename="${mesh_uri_prefix}/meshes/manipulator/link5.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
       </geometry>
       <origin xyz="0 0 -0.5659" rpy="0.0 0 0"/>
     </collision>
@@ -193,6 +257,8 @@
         parent="link5"
         camera_name="camera"
         use_nominal_extrinsics="true"
+        visual_mode="${visual_mode}"
+        mesh_uri_prefix="${mesh_uri_prefix}"
         xyz_offset="0 -0.055 0.0125"
         rpy_offset="0 -1.57079632679 -1.57079632679"/>
   </xacro:if>

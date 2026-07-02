@@ -1,7 +1,9 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-    <xacro:macro name="manip_gripper">
+    <xacro:macro name="manip_gripper" params="
+        visual_mode:='package'
+        mesh_uri_prefix:='package://caramelo_description'">
 
     <link name="gripper_base_link">
     <visual>
@@ -20,9 +22,14 @@
 
     <visual>
         <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/left_finger.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+        <box size="0.018 0.018 0.090"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+        <mesh filename="${mesh_uri_prefix}/meshes/manipulator/left_finger.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
         </geometry>
-        <origin xyz="-0.0252 0 -0.58444" rpy="0 0 0"/>
+        <origin xyz="${0 if visual_mode == 'primitive' else -0.0252} 0 ${-0.045 if visual_mode == 'primitive' else -0.58444}" rpy="0 0 0"/>
         <material name="grey">
         <color rgba="0.6 0.6 0.6 1"/>
         </material>
@@ -30,9 +37,14 @@
 
     <collision>
         <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/left_finger.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+        <box size="0.018 0.018 0.090"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+        <mesh filename="${mesh_uri_prefix}/meshes/manipulator/left_finger.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
         </geometry>
-        <origin xyz="-0.0252 0 -0.58444" rpy="0 0 0"/>
+        <origin xyz="${0 if visual_mode == 'primitive' else -0.0252} 0 ${-0.045 if visual_mode == 'primitive' else -0.58444}" rpy="0 0 0"/>
     </collision>
 
     <inertial>
@@ -55,17 +67,27 @@
 
     <visual>
         <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/right_finger.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+        <box size="0.018 0.018 0.090"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+        <mesh filename="${mesh_uri_prefix}/meshes/manipulator/right_finger.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
         </geometry>
-        <origin xyz="0.0252 0 -0.58444" rpy="0 0 0"/>
+        <origin xyz="${0 if visual_mode == 'primitive' else 0.0252} 0 ${-0.045 if visual_mode == 'primitive' else -0.58444}" rpy="0 0 0"/>
         <material name="grey"/>
     </visual>
 
     <collision>
         <geometry>
-        <mesh filename="package://caramelo_description/meshes/manipulator/right_finger.stl" scale="0.001 0.001 0.001"/>
+        <xacro:if value="${visual_mode == 'primitive'}">
+        <box size="0.018 0.018 0.090"/>
+        </xacro:if>
+        <xacro:if value="${visual_mode != 'primitive'}">
+        <mesh filename="${mesh_uri_prefix}/meshes/manipulator/right_finger.stl" scale="0.001 0.001 0.001"/>
+        </xacro:if>
         </geometry>
-        <origin xyz="0.0252 0 -0.58444" rpy="0 0 0"/>
+        <origin xyz="${0 if visual_mode == 'primitive' else 0.0252} 0 ${-0.045 if visual_mode == 'primitive' else -0.58444}" rpy="0 0 0"/>
     </collision>
 
     <inertial>

@@ -8,8 +8,10 @@
     prefix:=''
     parent:='base_link'
     use_realsense:=true
-    manip_mount_xyz:='0.185 0 0.078'
-    manip_mount_rpy:='0 0 0'">
+    manip_mount_xyz:='0.217 0 0.083'
+    manip_mount_rpy:='0 0 0'
+    visual_mode:='package'
+    mesh_uri_prefix:='package://caramelo_description'">
 
     <!-- AJUSTAR_NO_ROBO: conferir a pose real do suporte do manipulador no chassi. -->
     <joint name="${prefix}manipulator_mount_joint" type="fixed">
@@ -19,8 +21,14 @@
     </joint>
 
     <!-- IMPORTANTE: o base_link do manipulador vira manip_base_link para nao colidir com a base movel. -->
-    <xacro:manip_arm base_link_name="manip_base_link" use_realsense="${use_realsense}"/>
-    <xacro:manip_gripper/>
+    <xacro:manip_arm
+      base_link_name="manip_base_link"
+      use_realsense="${use_realsense}"
+      visual_mode="${visual_mode}"
+      mesh_uri_prefix="${mesh_uri_prefix}"/>
+    <xacro:manip_gripper
+      visual_mode="${visual_mode}"
+      mesh_uri_prefix="${mesh_uri_prefix}"/>
 
     <joint name="${prefix}gripper_base_joint" type="fixed">
       <parent link="link5"/>

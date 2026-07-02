@@ -1,12 +1,22 @@
 controller_manager:
   ros__parameters:
-    update_rate: 50  # Hz
+    update_rate: 30  # Hz
 
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
 
     mecanum_controller:
       type: mecanum_drive_controller/MecanumDriveController
+
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    gripper_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+joint_state_broadcaster:
+  ros__parameters:
+    publish_dynamic_joint_states: true
 
 # Configuração do controlador mecanum
 mecanum_controller:
@@ -41,3 +51,28 @@ mecanum_controller:
     # Covariâncias (ajuste fino depois conforme ruído esperado)
     twist_covariance_diagonal: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
     pose_covariance_diagonal:  [0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+
+arm_controller:
+  ros__parameters:
+    joints:
+      - manip_joint1
+      - manip_joint2
+      - manip_joint3
+      - manip_joint4
+      - manip_joint5
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+    allow_nonzero_velocity_at_trajectory_end: true
+
+gripper_controller:
+  ros__parameters:
+    joints:
+      - manip_joint6
+      - manip_joint7
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+    allow_nonzero_velocity_at_trajectory_end: true

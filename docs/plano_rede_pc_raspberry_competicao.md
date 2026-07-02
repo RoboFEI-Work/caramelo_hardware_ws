@@ -21,7 +21,7 @@ RMW_IMPLEMENTATION=
 Sugestao inicial:
 
 ```bash
-export ROS_DOMAIN_ID=24
+export ROS_DOMAIN_ID=67
 export ROS_LOCALHOST_ONLY=0
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET

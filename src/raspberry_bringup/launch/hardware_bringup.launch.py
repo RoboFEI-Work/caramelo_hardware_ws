@@ -1,6 +1,6 @@
 from ament_index_python.packages import get_package_share_path
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.parameter_descriptions import ParameterValue
@@ -37,6 +37,8 @@ def generate_launch_description():
     )
     robot_controllers = os.path.join(robot_bringup_path, 'config', 'caramelo_controllers.yaml')
     ekf_config = os.path.join(localization_path, 'config', 'ekf.yaml')
+    scan_normalizer_config = os.path.join(robot_bringup_path, 'config', 'scan_normalizer.yaml')
+    scan_normalizer_script = os.path.join(robot_bringup_path, 'scripts', 'scan_normalizer.py')
 
     robot_state_publisher_node = Node(
         package="robot_state_publisher",
@@ -65,16 +67,42 @@ def generate_launch_description():
         arguments=["mecanum_controller"],
     )
 
+    arm_controller_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["arm_controller"],
+    )
+
+    gripper_controller_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["gripper_controller"],
+    )
+
     laser_driver = Node(
             package='sllidar_ros2',
             executable='sllidar_node',
-            name='sllidar_node',
+            name='rplidar_node',
             parameters=[os.path.join(
                 robot_bringup_path,
                 "config",
                 "rplidar_s2.yaml"
             )],
+            remappings=[
+                ('scan', 'scan_raw'),
+            ],
             output="screen"
+    )
+
+    scan_normalizer = ExecuteProcess(
+        cmd=[
+            'python3',
+            scan_normalizer_script,
+            '--ros-args',
+            '--params-file',
+            scan_normalizer_config,
+        ],
+        output='screen',
     )
 
     imu_driver = Node(
@@ -141,12 +169,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'use_mock_components',
-            default_value='true',
-            description='Usa mock_components para o ros2_control do manipulador',
+            default_value='false',
+            description='Usa mock_components para o ros2_control do manipulador se true',
         ),
         DeclareLaunchArgument(
             'manip_mount_xyz',
-            default_value='0.185 0 0.078',
+            default_value='0.217 0 0.083',
             description='AJUSTAR_NO_ROBO: posicao do manipulador em relacao ao base_link',
         ),
         DeclareLaunchArgument(
@@ -156,10 +184,13 @@ def generate_launch_description():
         ),
         robot_state_publisher_node,
         laser_driver,
+        scan_normalizer,
         imu_driver,
         control_node,
         joint_state_broadcaster_spawner,
         mecanum_drive_controller_spawner,
+        arm_controller_spawner,
+        gripper_controller_spawner,
         ekf_node,
         rviz_node,
     ])
