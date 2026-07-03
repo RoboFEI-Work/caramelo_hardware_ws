@@ -3,12 +3,14 @@
 
     <ros2_control name="MobileBaseHardwareInterface" type="system">
         <hardware>
-            <!--* Qual o plugin de hardware a ser utilizado? -->
-            <!--* Mock components: Somente para simulação -->
-            <!-- <plugin>mock_components/GenericSystem</plugin> -->
-
-            <!--* Mobile base hardware interface: Para controle real do robô -->
-            <plugin>mobile_base_hardware/MobileBaseHWInterface</plugin>
+            <xacro:if value="$(arg use_mock_components)">
+                <!--* Mock components: Somente para validação sem hardware real -->
+                <plugin>mock_components/GenericSystem</plugin>
+            </xacro:if>
+            <xacro:unless value="$(arg use_mock_components)">
+                <!--* Mobile base hardware interface: Para controle real do robô -->
+                <plugin>mobile_base_hardware/MobileBaseHWInterface</plugin>
+            </xacro:unless>
         </hardware>
 
         <!-- Criar uma joint tag para cada junta que desejar que seja controlada -->

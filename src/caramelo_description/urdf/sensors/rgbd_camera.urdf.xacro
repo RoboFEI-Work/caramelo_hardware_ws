@@ -6,7 +6,9 @@
     camera_name:='camera'
     xyz_offset:='0 0 0'
     rpy_offset:='0 0 0'
-    use_nominal_extrinsics:=true">
+    use_nominal_extrinsics:=true
+    visual_mode:='package'
+    mesh_uri_prefix:='package://caramelo_description'">
 
     <!-- Intel RealSense D455 vendorizada no caramelo_description. -->
     <xacro:include filename="$(find caramelo_description)/urdf/sensors/realsense/_d455.urdf.xacro"/>
@@ -14,7 +16,9 @@
     <xacro:sensor_d455
         parent="${parent}"
         name="${camera_name}"
-        use_nominal_extrinsics="${use_nominal_extrinsics}">
+        use_nominal_extrinsics="${use_nominal_extrinsics}"
+        visual_mode="${visual_mode}"
+        mesh_uri_prefix="${mesh_uri_prefix}">
       <origin xyz="${xyz_offset}" rpy="${rpy_offset}"/>
     </xacro:sensor_d455>
 

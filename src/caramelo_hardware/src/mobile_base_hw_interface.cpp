@@ -46,6 +46,14 @@ namespace mobile_base_hardware {
 
             // Parametros gerais do node/driver (fixos no código)
             driver_config_ = MaxonDriverConfig{};
+            const auto host_it = info_.hardware_parameters.find("pigpio_host");
+            if (host_it != info_.hardware_parameters.end()) {
+                driver_config_.pigpio_host = host_it->second;
+            }
+            const auto port_it = info_.hardware_parameters.find("pigpio_port");
+            if (port_it != info_.hardware_parameters.end()) {
+                driver_config_.pigpio_port = port_it->second;
+            }
             // Encoder: 1024 sinais por volta do motor, gearbox 1:28 e decodificacao em quadratura x4.
             driver_config_.encoder_counts_per_wheel_rev = 1024.0 * 28.0 * 4.0;
 
@@ -102,7 +110,11 @@ namespace mobile_base_hardware {
             // Aqui é onde você pode configurar o hardware e abrir comunicação.
             driver_ = std::make_shared<MaxonMotorsNode>();
             if (!driver_->initialize(driver_config_, motor_configs_)) {
-                RCLCPP_ERROR(get_logger(), "Falha ao inicializar MaxonMotorsNode.");
+                RCLCPP_ERROR(
+                    get_logger(),
+                    "Falha ao inicializar MaxonMotorsNode. Verifique pigpiod, GPIOs, permissao e alimentacao da base.");
+                driver_->shutdown_hardware();
+                driver_.reset();
                 return hardware_interface::CallbackReturn::ERROR;
             }
             
@@ -138,16 +150,16 @@ namespace mobile_base_hardware {
         {
             (void)previous_state;
 
+            node_executor_.cancel();
+            if (node_spin_thread_.joinable()) {
+                node_spin_thread_.join();
+            }
+
             if (driver_) {
                 driver_->stop_all_motors();
                 driver_->shutdown_hardware();
                 node_executor_.remove_node(driver_);
                 driver_.reset();
-            }
-
-            node_executor_.cancel();
-            if (node_spin_thread_.joinable()) {
-                node_spin_thread_.join();
             }
 
             return hardware_interface::CallbackReturn::SUCCESS;
@@ -157,6 +169,10 @@ namespace mobile_base_hardware {
         (const rclcpp::Time & time, const rclcpp::Duration & period)
         {
             (void)time;
+
+            if (!driver_ || !driver_->is_initialized()) {
+                return hardware_interface::return_type::OK;
+            }
 
             double front_left_velocity = 0.0;
             driver_->get_velocity(front_left_motor_id_, front_left_velocity);
@@ -198,6 +214,10 @@ namespace mobile_base_hardware {
         {
             (void)time;
             (void)period;
+
+            if (!driver_ || !driver_->is_initialized()) {
+                return hardware_interface::return_type::OK;
+            }
 
             driver_->set_command_velocity(front_left_motor_id_, get_command("front_left_wheel_joint/velocity"));
             driver_->set_command_velocity(front_right_motor_id_, get_command("front_right_wheel_joint/velocity"));

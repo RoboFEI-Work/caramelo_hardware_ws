@@ -21,7 +21,12 @@ aluminum peripherial evaluation case.
 -->
 
 <robot name="usb_plug" xmlns:xacro="http://ros.org/wiki/xacro">
-  <xacro:macro name="usb_plug" params="parent *origin name:=usb_plug">
+  <xacro:macro name="usb_plug" params="
+    parent
+    *origin
+    name:=usb_plug
+    visual_mode:='package'
+    mesh_uri_prefix:='package://caramelo_description'">
     <xacro:property name="M_PI" value="3.1415926535897931" />
 
     <joint name="${name}_joint" type="fixed">
@@ -35,16 +40,24 @@ aluminum peripherial evaluation case.
         <!-- 0.044850 0.008000 0.018500 -->
         <origin xyz="0. -0.022425 0." rpy="0 0 ${M_PI/2}"/>
         <geometry>
-          <!--box size="0.044850 0.008 0.0185" /-->
-          <mesh filename="package://caramelo_description/meshes/intel_realsense/plug.stl" />
+          <xacro:if value="${visual_mode == 'primitive'}">
+            <box size="0.044850 0.008 0.0185"/>
+          </xacro:if>
+          <xacro:if value="${visual_mode != 'primitive'}">
+            <mesh filename="${mesh_uri_prefix}/meshes/intel_realsense/plug.stl" />
+          </xacro:if>
         </geometry>
         <material name="plastic"/>
       </visual>
       <collision>
         <origin xyz="0. -0.022425 0." rpy="0 0 ${M_PI/2}"/>
         <geometry>
-          <!--box size="0.044850 0.008 0.0185" /-->
-          <mesh filename="package://caramelo_description/meshes/intel_realsense/plug_collision.stl" />
+          <xacro:if value="${visual_mode == 'primitive'}">
+            <box size="0.044850 0.008 0.0185"/>
+          </xacro:if>
+          <xacro:if value="${visual_mode != 'primitive'}">
+            <mesh filename="${mesh_uri_prefix}/meshes/intel_realsense/plug_collision.stl" />
+          </xacro:if>
         </geometry>
       </collision>
     </link>

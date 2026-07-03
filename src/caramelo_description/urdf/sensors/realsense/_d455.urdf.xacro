@@ -26,7 +26,13 @@ aluminum peripherial evaluation case.
   <xacro:include filename="$(find caramelo_description)/urdf/sensors/realsense/_materials.urdf.xacro" />
   <xacro:include filename="$(find caramelo_description)/urdf/sensors/realsense/_usb_plug.urdf.xacro" />
 
-  <xacro:macro name="sensor_d455" params="parent *origin name:=camera use_nominal_extrinsics:=false">
+  <xacro:macro name="sensor_d455" params="
+    parent
+    *origin
+    name:=camera
+    use_nominal_extrinsics:=false
+    visual_mode:='package'
+    mesh_uri_prefix:='package://caramelo_description'">
     <xacro:arg name="add_plug" default="false" />
     <xacro:property name="M_PI" value="3.1415926535897931" />
 
@@ -77,8 +83,12 @@ aluminum peripherial evaluation case.
         <!-- <origin xyz="${d455_zero_depth_to_glass-d455_cam_depth/2} ${-d455_cam_depth_py} 0" rpy="0 0 0"/> -->
         <origin xyz="${d455_zero_depth_to_glass + d455_glass_to_front} ${-d455_cam_depth_py} 0" rpy="${M_PI/2} 0 ${M_PI/2}"/>
         <geometry>
-          <!-- <box size="${d455_cam_depth} ${d455_cam_width} ${d455_cam_height}"/> -->
-          <mesh filename="package://caramelo_description/meshes/intel_realsense/d455.stl" scale="0.001 0.001 0.001" />
+          <xacro:if value="${visual_mode == 'primitive'}">
+            <box size="${d455_cam_depth} ${d455_cam_width} ${d455_cam_height}"/>
+          </xacro:if>
+          <xacro:if value="${visual_mode != 'primitive'}">
+            <mesh filename="${mesh_uri_prefix}/meshes/intel_realsense/d455.stl" scale="0.001 0.001 0.001" />
+          </xacro:if>
         </geometry>
         <material name="aluminum"/>
       </visual>
@@ -202,7 +212,11 @@ aluminum peripherial evaluation case.
     </xacro:if>
 
     <xacro:if value="$(arg add_plug)">
-      <xacro:usb_plug parent="${name}_link" name="${name}_usb_plug">
+      <xacro:usb_plug
+          parent="${name}_link"
+          name="${name}_usb_plug"
+          visual_mode="${visual_mode}"
+          mesh_uri_prefix="${mesh_uri_prefix}">
         <origin xyz="${-0.00406-d455_cam_depth_px} ${-0.03701-d455_cam_depth_py} ${-d455_cam_depth_pz}" rpy="${M_PI/2} 0 0"/>
       </xacro:usb_plug>
     </xacro:if>

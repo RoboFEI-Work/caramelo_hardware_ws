@@ -8,7 +8,7 @@
   <xacro:arg name="use_realsense" default="true"/>
   <xacro:arg name="use_mock_components" default="true"/>
   <xacro:arg name="manip_mount_xyz" default="0.217 0 0.083"/>
-  <xacro:arg name="manip_mount_rpy" default="0 0 0"/>
+  <xacro:arg name="manip_mount_rpy" default="0 0 -1.57"/>
   <xacro:arg name="visual_mode" default="package"/>
   <xacro:arg name="mesh_uri_prefix" default="package://caramelo_description"/>
 

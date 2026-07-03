@@ -43,19 +43,25 @@ class ScanNormalizer(Node):
         input_topic = str(self.get_parameter('input_scan_topic').value)
         output_topic = str(self.get_parameter('output_scan_topic').value)
 
-        qos = QoSProfile(
+        input_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
             depth=10,
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
         )
+        output_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+        )
 
-        self._publisher = self.create_publisher(LaserScan, output_topic, qos)
+        self._publisher = self.create_publisher(LaserScan, output_topic, output_qos)
         self._subscription = self.create_subscription(
             LaserScan,
             input_topic,
             self._scan_callback,
-            qos,
+            input_qos,
         )
 
         self.get_logger().info(
