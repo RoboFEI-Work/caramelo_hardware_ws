@@ -39,9 +39,11 @@ mecanum_controller:
       # Raio efetivo da roda (m)
       wheels_radius: 0.05
       # lx + ly: metade do comprimento + metade da largura (usado para componente rotacional)
-      # mobile_base.xacro atual: distancia x entre rodas = 0.472 -> lx=0.236; distancia y = 0.290 -> ly=0.145; soma = 0.381
-      # AJUSTAR_NO_ROBO: recalcular se front_wheel_x/back_wheel_x/left_wheel_y/right_wheel_y forem medidos de novo.
-      sum_of_robot_center_projection_on_X_Y_axis: 0.381
+      # Desenho oficial da base: distancia x entre rodas = 0.471 -> lx=0.2355;
+      # distancia y (esquerda-direita) = 0.300 -> ly=0.150; soma = 0.3855.
+      # Valor EFETIVO pode ficar 5-15% acima do geometrico por escorregamento dos
+      # rolos mecanum — refinar com o teste de rotacao de docs/calibracao_odometria.md.
+      sum_of_robot_center_projection_on_X_Y_axis: 0.3855
 
     # Frames de odometria
     base_frame_id: base_footprint

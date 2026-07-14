@@ -223,20 +223,23 @@ void MaxonMotorsNode::shutdown_hardware()
 		control_thread_.join();
 	}
 
+	// Primeiro sinaliza e faz join (o poll() tem timeout de 100ms e reavalia a
+	// flag); so depois fecha os fds — fechar um fd em uso por poll() de outro
+	// thread e comportamento indefinido e era a causa do travamento no shutdown.
 	encoder_threads_running_.store(false);
-	for (auto & notify : encoder_notify_) {
-		if (notify.notify_fd >= 0) {
-			close(notify.notify_fd);
-			notify.notify_fd = -1;
-		}
-	}
-
 	for (auto & thread : encoder_threads_) {
 		if (thread.joinable()) {
 			thread.join();
 		}
 	}
 	encoder_threads_.clear();
+
+	for (auto & notify : encoder_notify_) {
+		if (notify.notify_fd >= 0) {
+			close(notify.notify_fd);
+			notify.notify_fd = -1;
+		}
+	}
 
 	if (pi_handle_ >= 0) {
 		stop_all_motors();
@@ -390,7 +393,10 @@ void MaxonMotorsNode::encoder_read_loop(std::size_t motor_index)
 		pfd.events = POLLIN;
 		pfd.revents = 0;
 
-		const int poll_ret = poll(&pfd, 1, -1);
+		// Timeout finito: close() em outro thread NAO acorda um poll() bloqueado,
+		// entao o timeout garante que o loop reavalie encoder_threads_running_
+		// periodicamente e o shutdown consiga fazer join() sem travar (SIGKILL).
+		const int poll_ret = poll(&pfd, 1, 100);
 		if (poll_ret <= 0) {
 			continue;
 		}
