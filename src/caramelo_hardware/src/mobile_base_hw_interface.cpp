@@ -1,6 +1,8 @@
 #include "caramelo_hardware/mobile_base_hw_interface.hpp"
 
 #include <array>
+#include <string>
+#include <utility>
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -141,6 +143,16 @@ namespace mobile_base_hardware {
             set_state("back_left_wheel_joint/position", 0.0);
             set_state("back_right_wheel_joint/position", 0.0);
 
+            // Semente das posicoes: captura a posicao atual acumulada do encoder para que
+            // o primeiro read() nao produza salto de posicao nem pico de velocidade.
+            for (std::size_t motor_id = 0; motor_id < last_wheel_position_rad_.size(); ++motor_id) {
+                double position_rad = 0.0;
+                double velocity_rad_s = 0.0;
+                if (driver_ && driver_->get_feedback(motor_id, position_rad, velocity_rad_s)) {
+                    last_wheel_position_rad_[motor_id] = position_rad;
+                }
+            }
+
             driver_->stop_all_motors();
             return hardware_interface::CallbackReturn::SUCCESS;
         }
@@ -174,37 +186,48 @@ namespace mobile_base_hardware {
                 return hardware_interface::return_type::OK;
             }
 
-            double front_left_velocity = 0.0;
-            driver_->get_velocity(front_left_motor_id_, front_left_velocity);
+            // Pares (junta, motor_id) na MESMA ordem definida em on_init()
+            // (front_left=0, front_right=1, back_left=2, back_right=3).
+            static const std::array<std::pair<const char *, std::size_t>, 4> kWheels = {{
+                {"front_left_wheel_joint", 0},
+                {"front_right_wheel_joint", 1},
+                {"back_left_wheel_joint", 2},
+                {"back_right_wheel_joint", 3},
+            }};
 
-            double front_right_velocity = 0.0;
-            driver_->get_velocity(front_right_motor_id_, front_right_velocity);
+            const double dt = period.seconds();
 
-            double back_left_velocity = 0.0;
-            driver_->get_velocity(back_left_motor_id_, back_left_velocity);
+            for (const auto & [joint, motor_id] : kWheels) {
+                double position_rad = 0.0;
+                double velocity_rad_s = 0.0;
+                // Posicao REAL acumulada do encoder (calculada a ~100Hz no driver),
+                // em vez de reintegrar a velocidade no ciclo do controller_manager.
+                if (!driver_->get_feedback(motor_id, position_rad, velocity_rad_s)) {
+                    continue;
+                }
 
-            double back_right_velocity = 0.0;
-            driver_->get_velocity(back_right_motor_id_, back_right_velocity);
+                // Delta real do encoder desde o ultimo read().
+                const double delta_rad = position_rad - last_wheel_position_rad_[motor_id];
+                last_wheel_position_rad_[motor_id] = position_rad;
 
-            if (std::abs(front_left_velocity) < 0.03) { front_left_velocity = 0.0; }
-            if (std::abs(front_right_velocity) < 0.03) { front_right_velocity = 0.0; }
-            if (std::abs(back_left_velocity) < 0.03) { back_left_velocity = 0.0; }
-            if (std::abs(back_right_velocity) < 0.03) { back_right_velocity = 0.0; }
+                // Velocidade = media exata no periodo do controller, derivada da posicao
+                // acumulada do encoder. Mais suave que a velocidade diferenciada a 100Hz
+                // no driver e consistente com a posicao exportada: a odometria integrada
+                // pelo mecanum_drive_controller reproduz o deslocamento real das rodas.
+                // Fallback para a velocidade do driver se o periodo for degenerado.
+                const double velocity_state = (dt > 1e-6) ? (delta_rad / dt) : velocity_rad_s;
 
-            set_state("front_left_wheel_joint/velocity", front_left_velocity);
-            set_state("front_right_wheel_joint/velocity", front_right_velocity);
-            set_state("back_left_wheel_joint/velocity", back_left_velocity);
-            set_state("back_right_wheel_joint/velocity", back_right_velocity);
+                // IMPORTANTE: sem deadband no feedback. O controlador integra a velocidade
+                // das rodas para gerar a odometria; zerar velocidades pequenas acumula erro
+                // sistematico no /odom/wheel (deadband so faria sentido no comando, nunca
+                // na leitura do encoder).
+                const std::string joint_name(joint);
+                set_state(joint_name + "/velocity", velocity_state);
 
-            // Para calcular a posição, basta integrar a velocidade ao longo do tempo.
-            set_state("front_left_wheel_joint/position", get_state("front_left_wheel_joint/position") + front_left_velocity * period.seconds());
-            set_state("front_right_wheel_joint/position", get_state("front_right_wheel_joint/position") + front_right_velocity * period.seconds());
-            set_state("back_left_wheel_joint/position", get_state("back_left_wheel_joint/position") + back_left_velocity * period.seconds());
-            set_state("back_right_wheel_joint/position", get_state("back_right_wheel_joint/position") + back_right_velocity * period.seconds());
-
-            // RCLCPP_INFO(get_logger(),
-            //             "front_left vel: %lf, front_right vel: %lf, back_left vel: %lf, back_right vel: %lf, ",
-            //             front_left_velocity, front_right_velocity, back_left_velocity, back_right_velocity);
+                // Posicao continua: acumula o delta real do encoder (nao a integral da
+                // velocidade), entao a posicao exportada segue exatamente o encoder.
+                set_state(joint_name + "/position", get_state(joint_name + "/position") + delta_rad);
+            }
 
             return hardware_interface::return_type::OK;
         }

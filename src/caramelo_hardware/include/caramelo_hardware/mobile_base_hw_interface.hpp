@@ -1,6 +1,7 @@
 #ifndef MOBILE_BASE_HW_INTERFACE_HPP
 #define MOBILE_BASE_HW_INTERFACE_HPP
 
+#include <array>
 #include <memory>
 #include <string>
 #include <thread>
@@ -58,6 +59,11 @@ namespace mobile_base_hardware {
                 int front_right_motor_id_ = 1;
                 int back_left_motor_id_ = 2;
                 int back_right_motor_id_ = 3;
+
+                // Ultima posicao lida do encoder por roda (rad), indexada pelo motor_id.
+                // Usada para calcular a velocidade media no periodo do controller e para
+                // manter a posicao exportada continua (sem salto) apos on_activate.
+                std::array<double, 4> last_wheel_position_rad_{{0.0, 0.0, 0.0, 0.0}};
 
     }; // class MobileBaseHWInterface
 

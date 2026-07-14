@@ -2,7 +2,9 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
     <xacro:macro name="manipulator_ros2_control" params="use_mock_components:=true">
-    <ros2_control name="Arm" type="system">
+    <!-- rw_rate limita o read()/write() do Dynamixel a 25Hz (100Hz / 4) mesmo com o
+         controller_manager a 100Hz: acima de ~30Hz o barramento perde pacotes. -->
+    <ros2_control name="Arm" type="system" rw_rate="25">
         <hardware>
             <xacro:if value="${use_mock_components}">
                 <!-- By default, set up controllers for simulation. This won't work on real hardware -->
