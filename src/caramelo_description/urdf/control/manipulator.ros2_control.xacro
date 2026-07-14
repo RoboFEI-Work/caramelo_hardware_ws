@@ -3,8 +3,11 @@
 
     <xacro:macro name="manipulator_ros2_control" params="use_mock_components:=true">
     <!-- rw_rate limita o read()/write() do Dynamixel a 25Hz (100Hz / 4) mesmo com o
-         controller_manager a 100Hz: acima de ~30Hz o barramento perde pacotes. -->
-    <ros2_control name="Arm" type="system" rw_rate="25">
+         controller_manager a 100Hz: acima de ~30Hz o barramento perde pacotes.
+         is_async roda o read()/write() do braco em thread propria: a leitura serial
+         dos Dynamixel leva ~23ms e, sem async, bloqueia o loop de 100Hz da base
+         (overrun com 3 ciclos perdidos a cada leitura). -->
+    <ros2_control name="Arm" type="system" rw_rate="25" is_async="true">
         <hardware>
             <xacro:if value="${use_mock_components}">
                 <!-- By default, set up controllers for simulation. This won't work on real hardware -->
