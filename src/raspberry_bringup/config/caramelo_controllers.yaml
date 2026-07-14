@@ -1,6 +1,9 @@
 controller_manager:
   ros__parameters:
-    update_rate: 30  # Hz
+    # 100Hz para a base mecanum (exigencia do MPPI/SmacLattice). O braco Dynamixel
+    # NAO acompanha essa taxa: ele e limitado via rw_rate="25" no ros2_control do
+    # manipulador (manipulator.ros2_control.xacro) e update_rate: 25 nos controllers.
+    update_rate: 100  # Hz
 
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
@@ -54,6 +57,9 @@ mecanum_controller:
 
 arm_controller:
   ros__parameters:
+    # Dynamixel perde pacotes acima de ~30Hz; 25Hz = 100/4 (divisor exato do
+    # controller_manager), alinhado com o rw_rate do hardware do braco.
+    update_rate: 25
     joints:
       - manip_joint1
       - manip_joint2
@@ -68,6 +74,8 @@ arm_controller:
 
 gripper_controller:
   ros__parameters:
+    # Mesma limitacao do Dynamixel do braco (ver arm_controller).
+    update_rate: 25
     joints:
       - manip_joint6
       - manip_joint7
