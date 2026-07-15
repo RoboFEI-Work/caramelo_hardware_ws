@@ -39,8 +39,20 @@ struct MaxonDriverConfig
 	static constexpr int kPulseUsForwardMax = 2000;
 	static constexpr int kPulseUsNeutral =
 		(kPulseUsNeutralMin + kPulseUsNeutralMax) / 2;
-	double encoder_counts_per_wheel_rev = 28672.0;
-	double max_wheel_rad_per_sec = 21.3;
+	// 1024 CPR x gearbox 1:28 x quadratura x4 (mesmo valor forcado no on_init
+	// do hardware interface; default alinhado para evitar 4x de erro em uso avulso).
+	double encoder_counts_per_wheel_rev = 114688.0;
+	// Mapa AFIM do firmware do ESC (B-G431B-ESC1 / MCSDK, medido no codigo-fonte):
+	//   motor_rpm = 1000 + (pulso_us - 1520) * (5364 - 1000) / 480   (espelhado no reverso)
+	// Em rad/s de RODA (gearbox 1:28):
+	//   piso  = 1000 rpm -> 3.74 rad/s  (menor velocidade que o ESC executa)
+	//   fundo = 5364 rpm -> 20.06 rad/s (escala cheia em 2000/1000 us)
+	// Ajustaveis pelo URDF (<param name="min/max_wheel_rad_per_sec">) apos calibracao.
+	double min_wheel_rad_per_sec = 3.74;
+	double max_wheel_rad_per_sec = 20.06;
+	// Watchdog: sem set_command_velocity() por mais que isso -> PWM neutro
+	// (protege contra morte do write()/controller_manager com PWM congelado).
+	double command_timeout_s = 0.5;
 };
 
 class MaxonMotorsNode : public rclcpp::Node
@@ -182,6 +194,10 @@ private:
 	std::thread control_thread_;
 	std::atomic<bool> control_thread_running_{false};
 	mutable std::mutex update_cycle_mutex_;
+
+	// Instante (steady clock, ns) do ultimo comando recebido via
+	// set_command_velocity(); usado pelo watchdog de comando no update_cycle().
+	std::atomic<int64_t> last_command_ns_{0};
 };
 
 }  // namespace mobile_base_hardware

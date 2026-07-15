@@ -10,6 +10,14 @@
             <xacro:unless value="$(arg use_mock_components)">
                 <!--* Mobile base hardware interface: Para controle real do robô -->
                 <plugin>mobile_base_hardware/MobileBaseHWInterface</plugin>
+                <!-- Mapa afim do ESC (B-G431B-ESC1) em rad/s de RODA:
+                     piso = 1000 rpm de motor (1520/1480us) e escala cheia = 5364 rpm
+                     (2000/1000us), gearbox 1:28. Refinar com a varredura de pulsos de
+                     docs/calibracao_odometria.md sem precisar recompilar. -->
+                <param name="min_wheel_rad_per_sec">3.74</param>
+                <param name="max_wheel_rad_per_sec">20.06</param>
+                <!-- Watchdog: sem write() por mais que isso -> PWM neutro. -->
+                <param name="command_timeout_s">0.5</param>
             </xacro:unless>
         </hardware>
 

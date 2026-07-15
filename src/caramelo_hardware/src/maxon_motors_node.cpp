@@ -277,6 +277,10 @@ void MaxonMotorsNode::set_command_velocity(std::size_t motor_index, double wheel
 		return;
 	}
 	motors_[motor_index].command_rad_s.store(wheel_velocity_rad_s);
+	last_command_ns_.store(
+		std::chrono::duration_cast<std::chrono::nanoseconds>(
+			std::chrono::steady_clock::now().time_since_epoch()).count(),
+		std::memory_order_relaxed);
 }
 
 bool MaxonMotorsNode::get_velocity(std::size_t motor_index, double & velocity_rad_s) const
@@ -474,6 +478,19 @@ void MaxonMotorsNode::update_cycle()
 	std_msgs::msg::Float64MultiArray msg;
 	msg.data.resize(motors_.size(), 0.0);
 
+	// Watchdog de comando: se o write() do ros2_control parar de chegar (processo
+	// travado/morto), comanda neutro em vez de congelar o ultimo PWM. Critico com
+	// este firmware de ESC: perda do sinal PWM provoca reversao total (ver
+	// docs/esc_stm32_comportamento_e_riscos.md), entao manter pulso neutro valido
+	// e sempre a opcao segura.
+	const int64_t last_cmd_ns = last_command_ns_.load(std::memory_order_relaxed);
+	const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+		std::chrono::steady_clock::now().time_since_epoch()).count();
+	const bool command_stale =
+		(last_cmd_ns == 0) ||
+		((now_ns - last_cmd_ns) >
+			static_cast<int64_t>(driver_config_.command_timeout_s * 1e9));
+
 	for (std::size_t i = 0; i < motors_.size(); ++i) {
 		auto & motor = motors_[i];
 		const int64_t count_now = counts_[i].load(std::memory_order_relaxed);
@@ -488,7 +505,9 @@ void MaxonMotorsNode::update_cycle()
 		motor.velocity_rad_s.store(new_velocity);
 		msg.data[i] = new_velocity;
 
-		const double cmd_signed = motor.command_rad_s.load() * motor.config.command_sign;
+		const double cmd_signed = command_stale
+			? 0.0
+			: motor.command_rad_s.load() * motor.config.command_sign;
 		const int pulse_us = velocity_to_pulse_width_us(cmd_signed);
 		set_servo_pulsewidth(pi_handle_, motor.config.pwm_gpio, pulse_us);
 	}
@@ -499,10 +518,29 @@ void MaxonMotorsNode::update_cycle()
 
 int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) const
 {
-	const double max_rad = std::max(1e-6, driver_config_.max_wheel_rad_per_sec);
-	const double norm = std::clamp(wheel_velocity_rad_s / max_rad, -1.0, 1.0);
+	// O firmware do ESC (B-G431B-ESC1) roda controle de velocidade em MALHA FECHADA
+	// (FOC + sensores hall) e interpreta o pulso de forma AFIM com um PISO:
+	//   1520us -> piso (speed_min, 1000 rpm = 3.74 rad/s de roda)
+	//   2000us -> escala cheia (speed_max, 5364 rpm = 20.06 rad/s de roda)
+	// O mapa antigo (proporcional 0..21.3 rad/s) ignorava o piso e a escala errada,
+	// executando ~1.6x a velocidade comandada (medido: cmd 4 -> 6.3 rad/s).
+	// Inverso correto: pulso = 1520 + (|cmd| - piso) * 480 / (max - piso).
+	const double floor_rad = std::max(0.0, driver_config_.min_wheel_rad_per_sec);
+	const double max_rad = std::max(floor_rad + 1e-6, driver_config_.max_wheel_rad_per_sec);
+	const double magnitude = std::abs(wheel_velocity_rad_s);
 
-	if (norm > 0.0) {
+	// Politica "mais proximo executavel": o ESC nao gira abaixo do piso, entao
+	// comandos menores que meio piso viram neutro (parado) e entre meio piso e o
+	// piso viram o piso. Sem isso qualquer comando minusculo executaria >= 3.74
+	// rad/s e distorceria a mistura cinematica mecanum em manobras lentas.
+	if (magnitude < std::max(1e-9, 0.5 * floor_rad)) {
+		return neutral_pulse_width_us();
+	}
+
+	const double clamped = std::clamp(magnitude, floor_rad, max_rad);
+	const double norm = (clamped - floor_rad) / (max_rad - floor_rad);
+
+	if (wheel_velocity_rad_s > 0.0) {
 		const double pulse_f =
 			static_cast<double>(MaxonDriverConfig::kPulseUsForwardMin) +
 			norm * static_cast<double>(
@@ -514,20 +552,15 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) con
 			MaxonDriverConfig::kPulseUsForwardMax);
 	}
 
-	if (norm < 0.0) {
-		const double reverse_norm = -norm;
-		const double pulse_f =
-			static_cast<double>(MaxonDriverConfig::kPulseUsReverseMin) -
-			reverse_norm * static_cast<double>(
-				MaxonDriverConfig::kPulseUsReverseMin - MaxonDriverConfig::kPulseUsReverseMax);
-		const int pulse_us = static_cast<int>(std::lround(pulse_f));
-		return clamp_int(
-			pulse_us,
-			MaxonDriverConfig::kPulseUsReverseMax,
-			MaxonDriverConfig::kPulseUsReverseMin);
-	}
-
-	return neutral_pulse_width_us();
+	const double pulse_f =
+		static_cast<double>(MaxonDriverConfig::kPulseUsReverseMin) -
+		norm * static_cast<double>(
+			MaxonDriverConfig::kPulseUsReverseMin - MaxonDriverConfig::kPulseUsReverseMax);
+	const int pulse_us = static_cast<int>(std::lround(pulse_f));
+	return clamp_int(
+		pulse_us,
+		MaxonDriverConfig::kPulseUsReverseMax,
+		MaxonDriverConfig::kPulseUsReverseMin);
 }
 
 int MaxonMotorsNode::neutral_pulse_width_us() const

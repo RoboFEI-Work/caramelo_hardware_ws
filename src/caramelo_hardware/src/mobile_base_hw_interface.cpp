@@ -56,6 +56,28 @@ namespace mobile_base_hardware {
             if (port_it != info_.hardware_parameters.end()) {
                 driver_config_.pigpio_port = port_it->second;
             }
+
+            // Mapa afim do ESC em rad/s de RODA (piso e escala cheia), configuravel
+            // pelo URDF para permitir recalibracao sem recompilar. Ver
+            // docs/esc_stm32_comportamento_e_riscos.md para a origem dos valores.
+            const auto read_double_param =
+                [this](const char * name, double & target) {
+                    const auto it = info_.hardware_parameters.find(name);
+                    if (it == info_.hardware_parameters.end()) {
+                        return;
+                    }
+                    try {
+                        target = std::stod(it->second);
+                    } catch (const std::exception &) {
+                        RCLCPP_WARN(
+                            get_logger(),
+                            "Parametro '%s' invalido ('%s'); mantendo %.3f.",
+                            name, it->second.c_str(), target);
+                    }
+                };
+            read_double_param("min_wheel_rad_per_sec", driver_config_.min_wheel_rad_per_sec);
+            read_double_param("max_wheel_rad_per_sec", driver_config_.max_wheel_rad_per_sec);
+            read_double_param("command_timeout_s", driver_config_.command_timeout_s);
             // Encoder: 1024 sinais por volta do motor, gearbox 1:28 e decodificacao em quadratura x4.
             driver_config_.encoder_counts_per_wheel_rev = 1024.0 * 28.0 * 4.0;
 
