@@ -543,8 +543,9 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) con
 	// Margem de partida: pulso EXATAMENTE no limiar (1520/1480us) fica na
 	// fronteira de arme do firmware e, com a tolerancia de cristal de cada ESC,
 	// metade das rodas girava e metade nao (visto no robo: so as da esquerda).
-	// Empurramos o minimo ~8us para dentro da banda de rodagem.
-	constexpr int kMargemPartidaUs = 8;
+	// Empurramos o minimo 16us para dentro da banda: medido no robo, os ESCs
+	// da direita so partem com pulso >= ~1533us (bissecao vx 0.20-0.21).
+	constexpr int kMargemPartidaUs = 16;
 
 	if (wheel_velocity_rad_s > 0.0) {
 		const double pulse_f =
