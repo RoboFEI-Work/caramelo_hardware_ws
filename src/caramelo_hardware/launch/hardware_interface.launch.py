@@ -1,38 +1,30 @@
-from ament_index_python.packages import get_package_share_path
+# APOSENTADO — NAO USE ESTE LAUNCH.
+#
+# Este arquivo era uma versao antiga "open-loop, sem EKF" do bringup. Ele
+# remapeava a TF e a odometria do mecanum_controller DIRETO para /tf e /odom:
+#     ('/mecanum_controller/tf_odometry', '/tf')
+#     ('/mecanum_controller/odometry',    '/odom')
+# Isso faz o CONTROLADOR virar dono do TF odom->base_footprint e de /odom,
+# entrando em conflito frontal com o bringup real (raspberry_bringup/
+# hardware_bringup.launch.py), onde o EKF e' o unico dono de /odom e desse TF,
+# e o controlador vai para /odom/wheel. Rodar este launch (sozinho ou junto)
+# cria DOIS publishers de /odom e TF duplicada -> odometria corrompida.
+#
+# Alem disso, ele gera o URDF sem os args use_manipulator/use_realsense/
+# visual_mode:=http e nao sobe IMU nem LiDAR.
+#
+# USE SEMPRE:  ros2 launch raspberry_bringup hardware_bringup.launch.py
+#
+# Mantido no repositorio apenas por historico; aborta de proposito para evitar
+# que seja usado por engano (auditoria Fase 0 / RK-01).
+
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
-from launch.substitutions import Command, LaunchConfiguration
-from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.actions import Node
-import os
 
-def generate_launch_description():
-    robot_description_path = get_package_share_path('caramelo_description')
-    robot_bringup_path = get_package_share_path('raspberry_bringup')
-    
-    urdf_path = os.path.join(robot_description_path, 'urdf', 'robots', 'robot.urdf.xacro')
-    robot_description = ParameterValue(Command(['xacro ', urdf_path]), value_type=str)
-    robot_controllers = os.path.join(robot_bringup_path, 'config', 'caramelo_controllers.yaml')
 
-    robot_state_publisher_node = Node(
-        package="robot_state_publisher",
-        executable="robot_state_publisher",
-        parameters=[{'robot_description': robot_description}],
+def generate_launch_description() -> LaunchDescription:
+    raise RuntimeError(
+        "\n[CARAMELO] hardware_interface.launch.py foi APOSENTADO.\n"
+        "Ele remapeia TF/odom do controlador direto para /tf e /odom, conflitando "
+        "com o EKF do bringup real.\n"
+        "Use:  ros2 launch raspberry_bringup hardware_bringup.launch.py\n"
     )
-
-    control_node = Node(
-        package="controller_manager",
-        executable="ros2_control_node",
-        parameters=[robot_controllers],
-        remappings=[
-            ('/mecanum_controller/tf_odometry', '/tf'),
-            ('/mecanum_controller/odometry', '/odom'),
-        ],
-    )    
-    
-
-    return LaunchDescription([
-        robot_state_publisher_node,
-        control_node,
-    ])
