@@ -540,6 +540,12 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) con
 	const double clamped = std::clamp(magnitude, floor_rad, max_rad);
 	const double norm = (clamped - floor_rad) / (max_rad - floor_rad);
 
+	// Margem de partida: pulso EXATAMENTE no limiar (1520/1480us) fica na
+	// fronteira de arme do firmware e, com a tolerancia de cristal de cada ESC,
+	// metade das rodas girava e metade nao (visto no robo: so as da esquerda).
+	// Empurramos o minimo ~8us para dentro da banda de rodagem.
+	constexpr int kMargemPartidaUs = 8;
+
 	if (wheel_velocity_rad_s > 0.0) {
 		const double pulse_f =
 			static_cast<double>(MaxonDriverConfig::kPulseUsForwardMin) +
@@ -548,7 +554,7 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) con
 		const int pulse_us = static_cast<int>(std::lround(pulse_f));
 		return clamp_int(
 			pulse_us,
-			MaxonDriverConfig::kPulseUsForwardMin,
+			MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs,
 			MaxonDriverConfig::kPulseUsForwardMax);
 	}
 
@@ -560,7 +566,7 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) con
 	return clamp_int(
 		pulse_us,
 		MaxonDriverConfig::kPulseUsReverseMax,
-		MaxonDriverConfig::kPulseUsReverseMin);
+		MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs);
 }
 
 int MaxonMotorsNode::neutral_pulse_width_us() const
