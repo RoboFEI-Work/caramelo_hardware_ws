@@ -519,12 +519,13 @@ void MaxonMotorsNode::update_cycle()
 int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) const
 {
 	// O firmware do ESC (B-G431B-ESC1) roda controle de velocidade em MALHA FECHADA
-	// (FOC + sensores hall) e interpreta o pulso de forma AFIM com um PISO:
-	//   1520us -> piso (speed_min, 1000 rpm = 3.74 rad/s de roda)
+	// (FOC + sensores hall) e interpreta o pulso de forma AFIM com um PISO.
+	// Firmware Caramelo 2026-07 (banda morta alargada + speed_min 300 rpm):
+	//   1540us -> piso (speed_min, 300 rpm = 1.12 rad/s de roda)
 	//   2000us -> escala cheia (speed_max, 5364 rpm = 20.06 rad/s de roda)
-	// O mapa antigo (proporcional 0..21.3 rad/s) ignorava o piso e a escala errada,
-	// executando ~1.6x a velocidade comandada (medido: cmd 4 -> 6.3 rad/s).
-	// Inverso correto: pulso = 1520 + (|cmd| - piso) * 480 / (max - piso).
+	// Inverso correto: pulso = 1540 + (|cmd| - piso) * 460 / (max - piso).
+	// (Os valores 1540/460 vem das constantes kPulseUs*; o piso/max vem do URDF
+	// min/max_wheel_rad_per_sec — manter os TRES sincronizados com o firmware.)
 	const double floor_rad = std::max(0.0, driver_config_.min_wheel_rad_per_sec);
 	const double max_rad = std::max(floor_rad + 1e-6, driver_config_.max_wheel_rad_per_sec);
 	const double magnitude = std::abs(wheel_velocity_rad_s);
@@ -540,12 +541,11 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) con
 	const double clamped = std::clamp(magnitude, floor_rad, max_rad);
 	const double norm = (clamped - floor_rad) / (max_rad - floor_rad);
 
-	// Margem de partida: pulso EXATAMENTE no limiar (1520/1480us) fica na
-	// fronteira de arme do firmware e, com a tolerancia de cristal de cada ESC,
-	// metade das rodas girava e metade nao (visto no robo: so as da esquerda).
-	// Empurramos o minimo 16us para dentro da banda: medido no robo, os ESCs
-	// da direita so partem com pulso >= ~1533us (bissecao vx 0.20-0.21).
-	constexpr int kMargemPartidaUs = 16;
+	// Margem de partida: pulso EXATAMENTE no limiar (1540/1460us) fica na
+	// fronteira de arme do firmware e, com a tolerancia do oscilador de cada
+	// ESC (ate ~+-22us @1500us), a placa pode ler o pulso abaixo do limiar e
+	// nao partir. 30us de margem garante partida mesmo na pior placa medida.
+	constexpr int kMargemPartidaUs = 30;
 
 	if (wheel_velocity_rad_s > 0.0) {
 		const double pulse_f =

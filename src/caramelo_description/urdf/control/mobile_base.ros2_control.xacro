@@ -14,7 +14,10 @@
                      piso = 1000 rpm de motor (1520/1480us) e escala cheia = 5364 rpm
                      (2000/1000us), gearbox 1:28. Refinar com a varredura de pulsos de
                      docs/calibracao_odometria.md sem precisar recompilar. -->
-                <param name="min_wheel_rad_per_sec">3.74</param>
+                <!-- Firmware Caramelo 2026-07: speed_min 300 rpm (era 1000).
+                     300 rpm / gearbox 28 * 2*pi/60 = 1.12 rad/s de roda.
+                     SO VALE com os 4 ESCs regravados com o firmware novo! -->
+                <param name="min_wheel_rad_per_sec">1.12</param>
                 <param name="max_wheel_rad_per_sec">20.06</param>
                 <!-- Watchdog: sem write() por mais que isso -> PWM neutro. -->
                 <param name="command_timeout_s">0.5</param>

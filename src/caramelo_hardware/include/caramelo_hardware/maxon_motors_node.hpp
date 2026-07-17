@@ -31,24 +31,27 @@ struct MaxonDriverConfig
 {
 	std::string pigpio_host;
 	std::string pigpio_port;
+	// 2026-07: bandas casadas com o firmware corrigido dos ESCs (banda morta
+	// alargada p/ tolerar o oscilador +-1.5% das placas): forward >=1540us,
+	// reverso <=1460us, neutro 1500us. NAO usar com firmware antigo (1520/1480).
 	static constexpr int kPulseUsReverseMax = 1000;
-	static constexpr int kPulseUsReverseMin = 1480;
-	static constexpr int kPulseUsNeutralMin = 1480;
-	static constexpr int kPulseUsNeutralMax = 1520;
-	static constexpr int kPulseUsForwardMin = 1520;
+	static constexpr int kPulseUsReverseMin = 1460;
+	static constexpr int kPulseUsNeutralMin = 1460;
+	static constexpr int kPulseUsNeutralMax = 1540;
+	static constexpr int kPulseUsForwardMin = 1540;
 	static constexpr int kPulseUsForwardMax = 2000;
 	static constexpr int kPulseUsNeutral =
 		(kPulseUsNeutralMin + kPulseUsNeutralMax) / 2;
 	// 1024 CPR x gearbox 1:28 x quadratura x4 (mesmo valor forcado no on_init
 	// do hardware interface; default alinhado para evitar 4x de erro em uso avulso).
 	double encoder_counts_per_wheel_rev = 114688.0;
-	// Mapa AFIM do firmware do ESC (B-G431B-ESC1 / MCSDK, medido no codigo-fonte):
-	//   motor_rpm = 1000 + (pulso_us - 1520) * (5364 - 1000) / 480   (espelhado no reverso)
+	// Mapa AFIM do firmware Caramelo 2026-07 (B-G431B-ESC1 / MCSDK modificado):
+	//   motor_rpm = 300 + (pulso_us - 1540) * (5364 - 300) / 460   (espelhado no reverso)
 	// Em rad/s de RODA (gearbox 1:28):
-	//   piso  = 1000 rpm -> 3.74 rad/s  (menor velocidade que o ESC executa)
+	//   piso  = 300 rpm  -> 1.12 rad/s  (menor velocidade que o ESC executa)
 	//   fundo = 5364 rpm -> 20.06 rad/s (escala cheia em 2000/1000 us)
 	// Ajustaveis pelo URDF (<param name="min/max_wheel_rad_per_sec">) apos calibracao.
-	double min_wheel_rad_per_sec = 3.74;
+	double min_wheel_rad_per_sec = 1.12;
 	double max_wheel_rad_per_sec = 20.06;
 	// Watchdog: sem set_command_velocity() por mais que isso -> PWM neutro
 	// (protege contra morte do write()/controller_manager com PWM congelado).
