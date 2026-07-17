@@ -518,6 +518,14 @@ void MaxonMotorsNode::update_cycle()
 
 int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) const
 {
+	// GUARDA CRITICA: o ros2_control inicializa os comandos das juntas como NaN
+	// ate o controlador ativar. NaN aqui passava pelas comparacoes (todas
+	// falsas), virava lround(NaN) e o clamp final cravava 1000us = RE MAXIMA:
+	// os 4 ESCs recebiam ~8s de re total durante o carregamento do bringup
+	// (flagrado com monitor pigpio nos GPIOs 17/23/24/25 em 2026-07-18).
+	if (!std::isfinite(wheel_velocity_rad_s)) {
+		return neutral_pulse_width_us();
+	}
 	// O firmware do ESC (B-G431B-ESC1) roda controle de velocidade em MALHA FECHADA
 	// (FOC + sensores hall) e interpreta o pulso de forma AFIM com um PISO.
 	// Firmware Caramelo 2026-07 (banda morta alargada + speed_min 300 rpm):

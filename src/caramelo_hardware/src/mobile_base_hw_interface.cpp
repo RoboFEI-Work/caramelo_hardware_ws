@@ -175,6 +175,14 @@ namespace mobile_base_hardware {
                 }
             }
 
+            // Comandos comecam como NaN no ros2_control ate o controlador ativar;
+            // zera-os aqui para o write() nunca propagar NaN ao driver (NaN
+            // virava pulso de 1000us = re maxima nos 4 ESCs durante o bringup).
+            set_command("front_left_wheel_joint/velocity", 0.0);
+            set_command("front_right_wheel_joint/velocity", 0.0);
+            set_command("back_left_wheel_joint/velocity", 0.0);
+            set_command("back_right_wheel_joint/velocity", 0.0);
+
             driver_->stop_all_motors();
             return hardware_interface::CallbackReturn::SUCCESS;
         }
