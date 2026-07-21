@@ -37,7 +37,7 @@ ekf_filter_node:
       world_frame: odom
 
       sensor_timeout: 0.2
-      print_diagnostics: false
+      print_diagnostics: true
       reset_on_time_jump: true
 
       
