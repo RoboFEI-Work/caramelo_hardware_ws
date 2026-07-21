@@ -1,7 +1,7 @@
 ekf_filter_node:
     ros__parameters:
       # 50Hz: a Pi nao sustenta EKF a 100Hz (Failed to meet update rate no log).
-      frequency: 50.0
+      frequency: 40.0
 
       # ekf_localization_node and ukf_localization_node both use a 3D omnidirectional motion model. If this parameter is
       # set to true, no 3D information will be used in your state estimate. Use this if you are operating in a planar
@@ -37,7 +37,7 @@ ekf_filter_node:
       world_frame: odom
 
       sensor_timeout: 0.2
-      print_diagnostics: true
+      print_diagnostics: false
       reset_on_time_jump: true
 
       
