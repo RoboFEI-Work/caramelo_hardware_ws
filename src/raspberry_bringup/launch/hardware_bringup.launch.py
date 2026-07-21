@@ -143,6 +143,10 @@ def generate_launch_description():
 
     mesh_server = ExecuteProcess(
         cmd=[
+            # nice +15: servir STL e cosmetico (so o RViz usa). Sem isso, o pico
+            # de CPU ao abrir o RViz roubava ciclo do EKF na Pi ("Failed to
+            # meet update rate" em rajadas, visto 2026-07-21).
+            'nice', '-n', '15',
             'python3',
             mesh_server_script,
             '--port',
