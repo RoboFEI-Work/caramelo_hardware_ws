@@ -15,10 +15,8 @@ find_package(std_msgs REQUIRED)
 find_package(dynamixel_sdk REQUIRED)
 
 include(CheckIncludeFileCXX)
-check_include_file_cxx(pigpiod_if2.h HAVE_PIGPIOD_IF2_H)
-check_include_file_cxx(pigpio.h HAVE_PIGPIO_H)
-find_library(PIGPIOD_IF2_LIB pigpiod_if2)
-find_library(PIGPIO_LIB pigpio)
+check_include_file_cxx(lgpio.h HAVE_LGPIO_H)
+find_library(LGPIO_LIB lgpio)
 
 include_directories(include)
 
@@ -41,16 +39,13 @@ ament_target_dependencies(
   dynamixel_sdk
 )
 
-if(HAVE_PIGPIOD_IF2_H AND HAVE_PIGPIO_H AND PIGPIOD_IF2_LIB)
-  target_compile_definitions(${PROJECT_NAME} PRIVATE CARAMELO_HAS_PIGPIO=1)
-  target_link_libraries(${PROJECT_NAME} ${PIGPIOD_IF2_LIB})
-  if(PIGPIO_LIB)
-    target_link_libraries(${PROJECT_NAME} ${PIGPIO_LIB})
-  endif()
-  message(STATUS "caramelo_hardware: pigpio backend enabled.")
+if(HAVE_LGPIO_H AND LGPIO_LIB)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE CARAMELO_HAS_LGPIO=1)
+  target_link_libraries(${PROJECT_NAME} ${LGPIO_LIB})
+  message(STATUS "caramelo_hardware: lgpio backend enabled (Raspberry Pi 5 / RP1).")
 else()
-  target_compile_definitions(${PROJECT_NAME} PRIVATE CARAMELO_HAS_PIGPIO=0)
-  message(WARNING "caramelo_hardware: pigpio headers/libs not found. GPIO backend disabled for this build.")
+  target_compile_definitions(${PROJECT_NAME} PRIVATE CARAMELO_HAS_LGPIO=0)
+  message(WARNING "caramelo_hardware: lgpio headers/libs not found (apt install liblgpio-dev). GPIO backend disabled for this build.")
 endif()
 
 pluginlib_export_plugin_description_file(hardware_interface caramelo_hw_interface.xml)

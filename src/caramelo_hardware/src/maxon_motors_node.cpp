@@ -8,13 +8,9 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
-#include <poll.h>
-#include <unistd.h>
 
-#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
-#include <pigpiod_if2.h>
-#include <pigpio.h>
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+#include <lgpio.h>
 #endif
 
 namespace mobile_base_hardware
@@ -23,24 +19,30 @@ namespace mobile_base_hardware
 namespace
 {
 constexpr double kTwoPi = 6.28318530717958647692;
-constexpr int kInvalidCallbackId = -1;
-#if defined(PI_EITHER_EDGE)
-constexpr unsigned kEitherEdge = PI_EITHER_EDGE;
-#elif defined(EITHER_EDGE)
-constexpr unsigned kEitherEdge = EITHER_EDGE;
-#else
-constexpr unsigned kEitherEdge = 2U;
-#endif
+// Frequencia dos pulsos servo para os ESCs (mesma dos 50Hz default do pigpio).
+constexpr int kServoFrequencyHz = 50;
 
 int clamp_int(int value, int min_v, int max_v)
 {
 	return std::min(std::max(value, min_v), max_v);
 }
 
-#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
-uint32_t bit(int gpio)
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+// Trampoline C chamado pelo thread de alertas do lgpio (um thread por chip,
+// entregas em ordem — sem corrida entre linhas A/B do mesmo motor).
+void encoder_alerts_trampoline(int num_alerts, lgGpioAlert_p alerts, void * userdata)
 {
-	return (1u << gpio);
+	auto * ctx = static_cast<MaxonMotorsNode::CallbackContext *>(userdata);
+	if (ctx == nullptr || ctx->self == nullptr) {
+		return;
+	}
+	for (int i = 0; i < num_alerts; ++i) {
+		const int level = alerts[i].report.level;
+		if (level != 0 && level != 1) {
+			continue;  // 2 = watchdog/timeout do lgpio, nao e borda real
+		}
+		ctx->self->handle_encoder_alert(ctx->motor_index, ctx->is_line_b, level);
+	}
 }
 #endif
 
@@ -73,23 +75,44 @@ bool MaxonMotorsNode::initialize(
 	const double counts_per_rev = std::max(1.0, driver_config_.encoder_counts_per_wheel_rev);
 	rad_per_count_ = kTwoPi / counts_per_rev;
 
-#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
-	char * pigpio_host = driver_config_.pigpio_host.empty()
-		? nullptr
-		: const_cast<char *>(driver_config_.pigpio_host.c_str());
-	char * pigpio_port = driver_config_.pigpio_port.empty()
-		? nullptr
-		: const_cast<char *>(driver_config_.pigpio_port.c_str());
-
-	pi_handle_ = pigpio_start(pigpio_host, pigpio_port);
-	if (pi_handle_ < 0) {
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	// Abre o gpiochip do header de 40 pinos. Na Pi 5 as linhas ficam no RP1
+	// (label "pinctrl-rp1", chip 4 no kernel Ubuntu 24.04; chips 0-3 sao do
+	// SoC e NAO vao ao header). -1 = varre pelos labels; numero explicito no
+	// URDF (<param name="gpiochip_device">) pula a deteccao.
+	int chip_number = driver_config_.gpiochip_device;
+	if (chip_number >= 0) {
+		chip_handle_ = lgGpiochipOpen(chip_number);
+	} else {
+		chip_handle_ = -1;
+		for (int c = 0; c < 16 && chip_handle_ < 0; ++c) {
+			const int h = lgGpiochipOpen(c);
+			if (h < 0) {
+				continue;
+			}
+			lgChipInfo_t info;
+			if (lgGpioGetChipInfo(h, &info) == LG_OKAY &&
+				std::strstr(info.label, "rp1") != nullptr)
+			{
+				chip_handle_ = h;
+				chip_number = c;
+			} else {
+				lgGpiochipClose(h);
+			}
+		}
+		if (chip_handle_ < 0) {
+			// Pi 4 e anteriores: header no gpiochip0.
+			chip_number = 0;
+			chip_handle_ = lgGpiochipOpen(0);
+		}
+	}
+	if (chip_handle_ < 0) {
 		RCLCPP_ERROR(
 			get_logger(),
-			"pigpio_start falhou com codigo %d. Host='%s' porta='%s'. "
-			"Na Raspberry, confira: sudo systemctl status pigpiod",
-			pi_handle_,
-			driver_config_.pigpio_host.empty() ? "localhost" : driver_config_.pigpio_host.c_str(),
-			driver_config_.pigpio_port.empty() ? "default" : driver_config_.pigpio_port.c_str());
+			"lgGpiochipOpen falhou com codigo %d (chip %d). Confira permissao de "
+			"/dev/gpiochip* (grupo gpio) e o parametro gpiochip_device.",
+			chip_handle_,
+			chip_number);
 		return false;
 	}
 
@@ -97,14 +120,9 @@ bool MaxonMotorsNode::initialize(
 	motors_.resize(motor_configs.size());
 	cb_ctx_a_.resize(motor_configs.size());
 	cb_ctx_b_.resize(motor_configs.size());
-	encoder_notify_.clear();
-	encoder_notify_.resize(1);
 	counts_size_ = motor_configs.size();
 	counts_.reset(new std::atomic<int64_t>[counts_size_]);
 	last_counts_.assign(motor_configs.size(), 0);
-
-	uint32_t combined_notify_mask = 0;
-	uint32_t combined_initial_level = 0;
 
 	for (std::size_t i = 0; i < motor_configs.size(); ++i) {
 		auto & motor = motors_[i];
@@ -115,150 +133,100 @@ bool MaxonMotorsNode::initialize(
 			motor.config.feedback_sign = -1.0;
 		}
 
-		set_mode(pi_handle_, motor.config.pwm_gpio, PI_OUTPUT);
-		set_servo_pulsewidth(pi_handle_, motor.config.pwm_gpio, neutral_pulse_width_us());
+		if (lgGpioClaimOutput(chip_handle_, 0, motor.config.pwm_gpio, 0) < 0) {
+			RCLCPP_ERROR(
+				get_logger(),
+				"lgGpioClaimOutput falhou para PWM GPIO %d.",
+				motor.config.pwm_gpio);
+			shutdown_hardware();
+			return false;
+		}
+		lgTxServo(
+			chip_handle_, motor.config.pwm_gpio,
+			neutral_pulse_width_us(), kServoFrequencyHz, 0, 0);
 
-		set_mode(pi_handle_, motor.config.enc_a_gpio, PI_INPUT);
-		set_mode(pi_handle_, motor.config.enc_b_gpio, PI_INPUT);
-		set_pull_up_down(pi_handle_, motor.config.enc_a_gpio, PI_PUD_UP);
-		set_pull_up_down(pi_handle_, motor.config.enc_b_gpio, PI_PUD_UP);
-		set_glitch_filter(pi_handle_, motor.config.enc_a_gpio, 0);
-		set_glitch_filter(pi_handle_, motor.config.enc_b_gpio, 0);
+		// Alerta ja reivindica a linha como entrada; LG_BOTH_EDGES cobre a
+		// decodificacao de quadratura (mesmo papel do notify do pigpio).
+		if (lgGpioClaimAlert(
+				chip_handle_, LG_SET_PULL_UP, LG_BOTH_EDGES,
+				motor.config.enc_a_gpio, -1) < 0 ||
+			lgGpioClaimAlert(
+				chip_handle_, LG_SET_PULL_UP, LG_BOTH_EDGES,
+				motor.config.enc_b_gpio, -1) < 0)
+		{
+			RCLCPP_ERROR(
+				get_logger(),
+				"lgGpioClaimAlert falhou para encoders GPIO %d/%d.",
+				motor.config.enc_a_gpio,
+				motor.config.enc_b_gpio);
+			shutdown_hardware();
+			return false;
+		}
 
-		const int a0 = gpio_read(pi_handle_, motor.config.enc_a_gpio);
-		const int b0 = gpio_read(pi_handle_, motor.config.enc_b_gpio);
-		motor.last_state.store(((a0 != 0) << 1) | (b0 != 0));
+		const int a0 = lgGpioRead(chip_handle_, motor.config.enc_a_gpio);
+		const int b0 = lgGpioRead(chip_handle_, motor.config.enc_b_gpio);
+		motor.last_state.store(((a0 > 0) << 1) | (b0 > 0));
 		motor.encoder_count.store(0);
-
-		cb_ctx_a_[i] = CallbackContext{this, i};
-		cb_ctx_b_[i] = CallbackContext{this, i};
-
-		const uint32_t a_bit = bit(motor.config.enc_a_gpio);
-		const uint32_t b_bit = bit(motor.config.enc_b_gpio);
-		combined_notify_mask |= a_bit | b_bit;
-		if (a0 != 0) {
-			combined_initial_level |= a_bit;
-		}
-		if (b0 != 0) {
-			combined_initial_level |= b_bit;
-		}
-
-		motor.callback_a = kInvalidCallbackId;
-		motor.callback_b = kInvalidCallbackId;
 		counts_[i].store(0);
-	}
 
-	auto & notify = encoder_notify_.front();
-	notify.mask = combined_notify_mask;
-	notify.last_level = combined_initial_level & notify.mask;
-	notify.notify_handle = notify_open(pi_handle_);
-	if (notify.notify_handle < 0) {
-		RCLCPP_ERROR(
-			get_logger(),
-			"notify_open falhou para mascara combinada GPIO 0x%08x com codigo %d.",
-			notify.mask,
-			notify.notify_handle);
-		shutdown_hardware();
-		return false;
-	}
-	if (notify_begin(pi_handle_, notify.notify_handle, notify.mask) < 0) {
-		RCLCPP_ERROR(
-			get_logger(),
-			"notify_begin falhou para mascara combinada GPIO 0x%08x.",
-			notify.mask);
-		shutdown_hardware();
-		return false;
-	}
-
-	char devname[64];
-	snprintf(devname, sizeof(devname), "/dev/pigpio%d", notify.notify_handle);
-	notify.notify_fd = open(devname, O_RDONLY | O_NONBLOCK);
-	if (notify.notify_fd < 0) {
-		RCLCPP_ERROR(
-			get_logger(),
-			"Falha ao abrir %s para encoders da base: %s.",
-			devname,
-			std::strerror(errno));
-		shutdown_hardware();
-		return false;
-	}
-
-	gpioReport_t rep{};
-	ssize_t n = read(notify.notify_fd, &rep, sizeof(rep));
-	if (n == static_cast<ssize_t>(sizeof(rep))) {
-		notify.last_level = rep.level & notify.mask;
+		cb_ctx_a_[i] = CallbackContext{this, i, false};
+		cb_ctx_b_[i] = CallbackContext{this, i, true};
+		lgGpioSetAlertsFunc(
+			chip_handle_, motor.config.enc_a_gpio,
+			&encoder_alerts_trampoline, &cb_ctx_a_[i]);
+		lgGpioSetAlertsFunc(
+			chip_handle_, motor.config.enc_b_gpio,
+			&encoder_alerts_trampoline, &cb_ctx_b_[i]);
 	}
 
 	last_update_time_ = now();
 	initialized_ = true;
-
-	encoder_threads_running_.store(true);
-	encoder_threads_.clear();
-	encoder_threads_.emplace_back(&MaxonMotorsNode::encoder_read_loop, this, 0);
 
 	control_thread_running_.store(true);
 	control_thread_ = std::thread(&MaxonMotorsNode::control_loop, this);
 
 	RCLCPP_INFO(
 		get_logger(),
-		"MaxonMotorsNode inicializado com %zu motores via pigpio handle %d.",
+		"MaxonMotorsNode inicializado com %zu motores via lgpio no gpiochip%d.",
 		motors_.size(),
-		pi_handle_);
+		chip_number);
 	return true;
 #else
 	(void)motor_configs;
 	RCLCPP_ERROR(
 		get_logger(),
-		"Backend pigpio nao foi habilitado neste build de caramelo_hardware. "
-		"Instale headers/libs pigpio na Raspberry e recompile o pacote.");
+		"Backend lgpio nao foi habilitado neste build de caramelo_hardware. "
+		"Instale liblgpio-dev na Raspberry e recompile o pacote.");
 	return false;
 #endif
 }
 
 void MaxonMotorsNode::shutdown_hardware()
 {
-#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
 	control_thread_running_.store(false);
 	if (control_thread_.joinable()) {
 		control_thread_.join();
 	}
 
-	// Primeiro sinaliza e faz join (o poll() tem timeout de 100ms e reavalia a
-	// flag); so depois fecha os fds — fechar um fd em uso por poll() de outro
-	// thread e comportamento indefinido e era a causa do travamento no shutdown.
-	encoder_threads_running_.store(false);
-	for (auto & thread : encoder_threads_) {
-		if (thread.joinable()) {
-			thread.join();
-		}
-	}
-	encoder_threads_.clear();
-
-	for (auto & notify : encoder_notify_) {
-		if (notify.notify_fd >= 0) {
-			close(notify.notify_fd);
-			notify.notify_fd = -1;
-		}
-	}
-
-	if (pi_handle_ >= 0) {
+	if (chip_handle_ >= 0) {
 		stop_all_motors();
-		for (auto & notify : encoder_notify_) {
-			if (notify.notify_handle >= 0) {
-				notify_begin(pi_handle_, notify.notify_handle, 0);
-			}
-			if (notify.notify_handle >= 0) {
-				notify_close(pi_handle_, notify.notify_handle);
-				notify.notify_handle = -1;
-			}
+		// Cancela os callbacks ANTES de destruir os contextos: o thread de
+		// alertas do lgpio pode estar entregando bordas neste exato momento.
+		for (auto & motor : motors_) {
+			lgGpioSetAlertsFunc(chip_handle_, motor.config.enc_a_gpio, nullptr, nullptr);
+			lgGpioSetAlertsFunc(chip_handle_, motor.config.enc_b_gpio, nullptr, nullptr);
+			lgTxServo(chip_handle_, motor.config.pwm_gpio, 0, kServoFrequencyHz, 0, 0);
+			lgGpioFree(chip_handle_, motor.config.pwm_gpio);
+			lgGpioFree(chip_handle_, motor.config.enc_a_gpio);
+			lgGpioFree(chip_handle_, motor.config.enc_b_gpio);
 		}
-		pigpio_stop(pi_handle_);
-		pi_handle_ = -1;
+		lgGpiochipClose(chip_handle_);
+		chip_handle_ = -1;
 	}
 	motors_.clear();
 	cb_ctx_a_.clear();
 	cb_ctx_b_.clear();
-	encoder_notify_.clear();
 	counts_.reset();
 	counts_size_ = 0;
 	last_counts_.clear();
@@ -305,57 +273,56 @@ bool MaxonMotorsNode::get_feedback(
 
 void MaxonMotorsNode::stop_all_motors()
 {
-#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
-	if (!initialized_ || pi_handle_ < 0) {
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	if (chip_handle_ < 0) {
 		return;
 	}
 
 	for (auto & motor : motors_) {
 		motor.command_rad_s.store(0.0);
-		set_servo_pulsewidth(pi_handle_, motor.config.pwm_gpio, neutral_pulse_width_us());
+		lgTxServo(
+			chip_handle_, motor.config.pwm_gpio,
+			neutral_pulse_width_us(), kServoFrequencyHz, 0, 0);
 	}
 #endif
 }
 
-void MaxonMotorsNode::encoder_callback(
-	int /*pi*/, unsigned /*gpio*/, unsigned /*level*/, uint32_t /*tick*/, void * userdata)
+void MaxonMotorsNode::handle_encoder_alert(
+	std::size_t motor_index, bool is_line_b, int level)
 {
-	auto * ctx = static_cast<CallbackContext *>(userdata);
-	if (ctx == nullptr || ctx->self == nullptr) {
-		return;
-	}
-	ctx->self->handle_encoder_edge(ctx->motor_index);
-}
-
-void MaxonMotorsNode::handle_encoder_edge(std::size_t motor_index)
-{
-#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
-	if (motor_index >= motors_.size() || pi_handle_ < 0) {
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	if (motor_index >= motors_.size() || motor_index >= counts_size_) {
 		return;
 	}
 
+	// O alerta traz o nivel da PROPRIA linha; o da outra vem do estado anterior.
+	// Todos os callbacks do chip chegam do mesmo thread do lgpio, em ordem —
+	// unico escritor de last_state, entao load+store simples e suficiente.
 	auto & motor = motors_[motor_index];
-	const int a = gpio_read(pi_handle_, motor.config.enc_a_gpio);
-	const int b = gpio_read(pi_handle_, motor.config.enc_b_gpio);
-	if (a < 0 || b < 0) {
+	const int prev_state = motor.last_state.load(std::memory_order_relaxed);
+	const int bit_now = (level != 0) ? 1 : 0;
+	const int new_state = is_line_b
+		? ((prev_state & 0x2) | bit_now)
+		: ((bit_now << 1) | (prev_state & 0x1));
+	if (new_state == prev_state) {
 		return;
 	}
+	motor.last_state.store(new_state, std::memory_order_relaxed);
 
-	const int new_state = ((a != 0) << 1) | (b != 0);
-	const int prev_state = motor.last_state.exchange(new_state);
-	const int idx = (prev_state << 2) | new_state;
 	static constexpr int8_t kQuadTable[16] = {
 		0, -1, 1, 0,
 		1, 0, 0, -1,
 		-1, 0, 0, 1,
 		0, 1, -1, 0
 	};
-	const int delta = kQuadTable[idx];
+	const int delta = kQuadTable[(prev_state << 2) | new_state];
 	if (delta != 0) {
-		motor.encoder_count.fetch_add(delta, std::memory_order_relaxed);
+		counts_[motor_index].fetch_add(delta, std::memory_order_relaxed);
 	}
 #else
 	(void)motor_index;
+	(void)is_line_b;
+	(void)level;
 #endif
 }
 
@@ -370,92 +337,9 @@ void MaxonMotorsNode::apply_pwm()
 	update_cycle();
 }
 
-void MaxonMotorsNode::encoder_read_loop(std::size_t motor_index)
-{
-#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
-	(void)motor_index;
-	if (encoder_notify_.empty()) {
-		return;
-	}
-
-	auto & notify = encoder_notify_.front();
-	std::array<gpioReport_t, 32> reports{};
-	static constexpr int8_t kQuadTable[16] = {
-		0, -1, 1, 0,
-		1, 0, 0, -1,
-		-1, 0, 0, 1,
-		0, 1, -1, 0
-	};
-
-	while (encoder_threads_running_.load()) {
-		if (notify.notify_fd < 0) {
-			break;
-		}
-
-		pollfd pfd;
-		pfd.fd = notify.notify_fd;
-		pfd.events = POLLIN;
-		pfd.revents = 0;
-
-		// Timeout finito: close() em outro thread NAO acorda um poll() bloqueado,
-		// entao o timeout garante que o loop reavalie encoder_threads_running_
-		// periodicamente e o shutdown consiga fazer join() sem travar (SIGKILL).
-		const int poll_ret = poll(&pfd, 1, 100);
-		if (poll_ret <= 0) {
-			continue;
-		}
-
-		if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
-			break;
-		}
-
-		if ((pfd.revents & POLLIN) == 0) {
-			continue;
-		}
-
-		ssize_t nr = read(notify.notify_fd, reports.data(), reports.size() * sizeof(gpioReport_t));
-		if (nr <= 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK) {
-				continue;
-			}
-			break;
-		}
-
-		const std::size_t report_count = static_cast<std::size_t>(nr) / sizeof(gpioReport_t);
-		for (std::size_t report_index = 0; report_index < report_count; ++report_index) {
-			const uint32_t level = reports[report_index].level;
-			const uint32_t changed = (notify.last_level ^ level) & notify.mask;
-
-			for (std::size_t i = 0; i < motors_.size(); ++i) {
-				auto & motor = motors_[i];
-				const uint32_t a_bit = bit(motor.config.enc_a_gpio);
-				const uint32_t b_bit = bit(motor.config.enc_b_gpio);
-				if ((changed & (a_bit | b_bit)) == 0) {
-					continue;
-				}
-
-				const int a_now = (level & a_bit) ? 1 : 0;
-				const int b_now = (level & b_bit) ? 1 : 0;
-				const int new_state = (a_now << 1) | b_now;
-				const int last_state = motor.last_state.exchange(new_state);
-				const int idx = (last_state << 2) | new_state;
-				const int delta = kQuadTable[idx];
-				if (delta != 0) {
-					counts_[i].fetch_add(delta, std::memory_order_relaxed);
-				}
-			}
-
-			notify.last_level = level & notify.mask;
-		}
-	}
-#else
-	(void)motor_index;
-#endif
-}
-
 void MaxonMotorsNode::control_loop()
 {
-#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
 	while (control_thread_running_.load()) {
 		update_cycle();
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -465,10 +349,10 @@ void MaxonMotorsNode::control_loop()
 
 void MaxonMotorsNode::update_cycle()
 {
-#if defined(CARAMELO_HAS_PIGPIO) && CARAMELO_HAS_PIGPIO
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
 	std::lock_guard<std::mutex> lock(update_cycle_mutex_);
 
-	if (!initialized_ || pi_handle_ < 0) {
+	if (!initialized_ || chip_handle_ < 0) {
 		return;
 	}
 
@@ -509,7 +393,7 @@ void MaxonMotorsNode::update_cycle()
 			? 0.0
 			: motor.command_rad_s.load() * motor.config.command_sign;
 		const int pulse_us = velocity_to_pulse_width_us(cmd_signed);
-		set_servo_pulsewidth(pi_handle_, motor.config.pwm_gpio, pulse_us);
+		lgTxServo(chip_handle_, motor.config.pwm_gpio, pulse_us, kServoFrequencyHz, 0, 0);
 	}
 
 	velocity_pub_->publish(msg);

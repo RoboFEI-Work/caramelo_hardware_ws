@@ -29,8 +29,13 @@ struct MaxonMotorConfig
 
 struct MaxonDriverConfig
 {
+	// Mantidos por compatibilidade com URDFs antigos (eram do daemon pigpio,
+	// removido na migracao para a Pi 5); ignorados pelo backend lgpio.
 	std::string pigpio_host;
 	std::string pigpio_port;
+	// /dev/gpiochipN do header de 40 pinos. -1 = auto-detecta pelo label
+	// ("rp1" na Pi 5; fallback gpiochip0 nas Pi 4 e anteriores).
+	int gpiochip_device = -1;
 	// 2026-07: bandas casadas com o firmware corrigido dos ESCs (banda morta
 	// alargada p/ tolerar o oscilador +-1.5% das placas): forward >=1540us,
 	// reverso <=1460us, neutro 1500us. NAO usar com firmware antigo (1520/1480).
@@ -78,6 +83,20 @@ public:
 	void apply_pwm();
 
 	void stop_all_motors();
+
+	// Chamado pelo thread de alertas do lgpio a cada borda de encoder ja
+	// filtrada (level 0/1). Decodifica quadratura e acumula em counts_.
+	// Publico apenas para o trampoline C do lgpio; nao usar diretamente.
+	void handle_encoder_alert(std::size_t motor_index, bool is_line_b, int level);
+
+	// Contexto passado como userdata aos alertas do lgpio (idem: publico
+	// apenas para o trampoline).
+	struct CallbackContext
+	{
+		MaxonMotorsNode * self = nullptr;
+		std::size_t motor_index = 0;
+		bool is_line_b = false;
+	};
 
 private:
 	struct MotorRuntime
@@ -153,28 +172,10 @@ private:
 		int callback_b = -1;
 	};
 
-	struct CallbackContext
-	{
-		MaxonMotorsNode * self = nullptr;
-		std::size_t motor_index = 0;
-	};
-
-	static void encoder_callback(
-		int pi, unsigned gpio, unsigned level, uint32_t tick, void * userdata);
-	void handle_encoder_edge(std::size_t motor_index);
-	void encoder_read_loop(std::size_t motor_index);
 	void control_loop();
 	void update_cycle();
 	int velocity_to_pulse_width_us(double wheel_velocity_rad_s) const;
 	int neutral_pulse_width_us() const;
-
-	struct EncoderNotifyRuntime
-	{
-		int notify_handle = -1;
-		int notify_fd = -1;
-		uint32_t last_level = 0;
-		uint32_t mask = 0;
-	};
 
 	MaxonDriverConfig driver_config_;
 	std::vector<MotorRuntime> motors_;
@@ -182,7 +183,7 @@ private:
 	std::vector<CallbackContext> cb_ctx_b_;
 
 	double rad_per_count_ = 0.0;
-	int pi_handle_ = -1;
+	int chip_handle_ = -1;
 	bool initialized_ = false;
 	rclcpp::Time last_update_time_;
 
@@ -191,9 +192,6 @@ private:
 	std::unique_ptr<std::atomic<int64_t>[]> counts_;
 	std::size_t counts_size_ = 0;
 	std::vector<int64_t> last_counts_;
-	std::vector<EncoderNotifyRuntime> encoder_notify_;
-	std::vector<std::thread> encoder_threads_;
-	std::atomic<bool> encoder_threads_running_{false};
 	std::thread control_thread_;
 	std::atomic<bool> control_thread_running_{false};
 	mutable std::mutex update_cycle_mutex_;
