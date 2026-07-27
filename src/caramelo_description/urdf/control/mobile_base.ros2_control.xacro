@@ -17,7 +17,11 @@
                 <!-- Firmware Caramelo 2026-07: speed_min 300 rpm (era 1000).
                      300 rpm / gearbox 28 * 2*pi/60 = 1.12 rad/s de roda.
                      SO VALE com os 4 ESCs regravados com o firmware novo! -->
-                <param name="min_wheel_rad_per_sec">1.12</param>
+                <!-- 2026-07-27: firmware ESC com speed_min 300->650 rpm (operador).
+                     650 rpm de motor = 650/300 * 1.12 = 2.43 rad/s de RODA.
+                     REGRA: este valor casa com speed_min_valueRPM do firmware
+                     (mc_parameters.c) — mudar la' = mudar aqui (e rebuild PC+Pi). -->
+                <param name="min_wheel_rad_per_sec">2.43</param>
                 <param name="max_wheel_rad_per_sec">20.06</param>
                 <!-- Watchdog: sem write() por mais que isso -> PWM neutro. -->
                 <param name="command_timeout_s">0.5</param>
