@@ -196,7 +196,7 @@
           <mesh filename="${mesh_uri_prefix}/meshes/manipulator/link4.stl" scale="0.001 0.001 0.001"/>
         </xacro:if>
       </geometry>
-      <origin xyz="0 0 -0.48775" rpy="0 0 0"/>
+      <origin xyz="0 0 -0.48775" rpy="0 0 3.14"/>
     </collision>
 
     <inertial>
@@ -324,7 +324,7 @@
   <joint name="tcp_fixed" type="fixed">
     <parent link="link5"/>
     <child link="tcp"/>
-    <origin xyz="0 0 0.2" rpy="0 0 0"/>
+    <origin xyz="0 0 0.17" rpy="0 0 0"/>
   </joint>
 
   <!-- ==================== TCP 2 ==================-->
