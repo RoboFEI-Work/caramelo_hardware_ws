@@ -208,15 +208,6 @@ private:
 	// troca: girar a roda por fora (mao/empurrao) conta no sentido do ultimo
 	// comando — limite conhecido ate termos contagem por hardware (PIO/halls).
 	std::unique_ptr<std::atomic<int>[]> enc_dir_;
-	// PORTAO DE REPOUSO (2026-07-29): roda estacionada em cima de uma borda
-	// optica faz o comparador do encoder CHILREAR (~60kHz medidos, FR/BR) e,
-	// com o sentido vindo do comando, o chilrear integra numa direcao so'
-	// (fantasma de 13 rad/s parado -> robo "passeia" no RViz). Neutro ha mais
-	// de kEncGateNeutralNs -> enc_dir=0 (counts descartados) ate' o proximo
-	// comando nao-neutro. Custo: inercia alem de 0,8s e empurroes externos
-	// nao contam (limite ja documentado do dir-por-comando).
-	static constexpr int64_t kEncGateNeutralNs = 800LL * 1000 * 1000;
-	std::vector<int64_t> neutral_since_ns_;
 	std::size_t counts_size_ = 0;
 	std::vector<int64_t> last_counts_;
 	std::thread control_thread_;
