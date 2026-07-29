@@ -82,12 +82,22 @@ primeiro).
 
 ## Problemas conhecidos (não corrigir localmente)
 
-- **Ctrl-C no bringup às vezes NÃO mata o `ros2_control_node`** (observado
-  2026-07-29 com FIFO): o processo fica vivo segurando os GPIOs ("Device or
-  resource busy" p/ qualquer outro uso). Conferir com
-  `ps -eo pid,comm | grep ros2_control` e matar com `kill <pid>` — o driver
-  tem shutdown ordenado (neutro no fio → corta pulsos) e o firmware dos ESCs
-  para os motores sozinho se os pulsos sumirem.
+- **Ctrl-C no bringup às vezes NÃO mata os nós** (observado 2026-07-29 com
+  FIFO): ficam zumbis segurando GPIOs ("Device or resource busy") e — o caso
+  mais traiçoeiro — um `robot_state_publisher` zumbi continua servindo o
+  **URDF VELHO** no tópico latched `/robot_description`, e o
+  `controller_manager` NOVO pode engolir o URDF do zumbi na subida (parâmetros
+  novos do xacro "não fazem efeito" sem nenhum erro; custou horas de
+  diagnóstico no dia da calibração do trim). **Depois de todo Ctrl-C**:
+  ```bash
+  pkill -f robot_state_publisher; pkill -f ros2_control_node; \
+  pkill -f ekf_node; pkill -f "ros2 launch"; pkill -f wit_ros2_imu
+  ps -eo pid,cmd | grep -E "robot_state|ros2_control|ekf|launch" | grep -v grep
+  ```
+  (a última linha deve voltar vazia). Duplo-publisher detectável do PC com
+  `ros2 topic info /robot_description -v | grep "Publisher count"` (deve ser 1).
+  Seguro matar: o driver tem shutdown ordenado e o firmware dos ESCs para os
+  motores se os pulsos sumirem.
 
 - **`wit_ros2_imu` lança traceback no Ctrl+C** (`TypeError: 'NoneType' object cannot
   be interpreted as an integer` + `RCLError: failed to shutdown`). É um bug de

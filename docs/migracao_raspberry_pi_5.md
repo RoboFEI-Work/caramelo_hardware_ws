@@ -84,6 +84,14 @@ A bancada invalidou partes do port original e produziu a arquitetura atual
    com reencaixe do conector hall (29/07). Pendência de hardware: trocar a
    placa ESC FL↔outra roda p/ isolar placa×motor, ou retry rápido no firmware.
    Demais rodas partem juntas (spread 30-50 ms, ~330 ms do comando).
+4. **Assimetria de regime frente/ré → trim por ramo** (chão, 3 m + trena,
+   29/07): o ramo de FRENTE rodava ~8% abaixo do mapa (ré exata) → guinada de
+   ~23° em 3,4 m com comando reto. Conserto: `pulse_trim_forward_us = 8.0`
+   (URDF, `mobile_base.ros2_control.xacro`; o driver desloca mapa E piso de
+   margem juntos). Validado: guinada −23,6°→−2,0° (frente) e −22,3°→−2,7°
+   (ré); desvio lateral 56 cm→0-2 cm; rodas casadas em 1,3%; escala da
+   odometria −0,5%/−1,7% vs trena. Recalibrar com o mesmo protocolo
+   (`docs/calibracao_odometria.md`) se trocar ESC/firmware/pneus.
 4. **`Ctrl-C` pode deixar o `ros2_control_node` vivo** segurando GPIOs — ver
    `raspberry_tempo_real.md` §problemas conhecidos.
 
