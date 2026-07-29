@@ -57,6 +57,13 @@ struct MaxonDriverConfig
 	// firmware gravado nos 4 ESCs. 2026-07-27: speed_min 650 rpm -> 2.43 rad/s.
 	double min_wheel_rad_per_sec = 2.43;
 	double max_wheel_rad_per_sec = 20.06;
+	// Trim de calibracao POR RAMO (us; positivo = roda mais rapido naquele
+	// ramo). Medido no chao 2026-07-29 (3m + trena, ida e volta): o ramo de
+	// FRENTE rodava ~8% abaixo do previsto pelo mapa enquanto o de RE batia
+	// exato -> robo guinava ~23 graus em 3,4m. Deficit equivalente: ~7,3us.
+	// Valores vem do URDF (<param name="pulse_trim_forward/reverse_us">).
+	double pulse_trim_forward_us = 0.0;
+	double pulse_trim_reverse_us = 0.0;
 	// Watchdog: sem set_command_velocity() por mais que isso -> PWM neutro
 	// (protege contra morte do write()/controller_manager com PWM congelado).
 	double command_timeout_s = 0.5;

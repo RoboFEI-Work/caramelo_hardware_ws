@@ -558,27 +558,34 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(
 	// nao partir. 30us de margem garante partida mesmo na pior placa medida.
 	constexpr int kMargemPartidaUs = 30;
 
+	// Trim por ramo (ver .hpp): positivo = ramo mais rapido. Desloca o mapa E
+	// o piso de margem juntos — no piso de operacao o pulso fica cravado no
+	// clamp inferior, entao trim so' no valor computado seria engolido.
 	if (wheel_velocity_rad_s > 0.0) {
+		const int trim = static_cast<int>(std::lround(driver_config_.pulse_trim_forward_us));
 		const double pulse_f =
 			static_cast<double>(MaxonDriverConfig::kPulseUsForwardMin) +
 			norm * static_cast<double>(
-				MaxonDriverConfig::kPulseUsForwardMax - MaxonDriverConfig::kPulseUsForwardMin);
-		const int pulse_us = static_cast<int>(std::lround(pulse_f));
-		return clamp_int(
-			pulse_us,
-			MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs,
+				MaxonDriverConfig::kPulseUsForwardMax - MaxonDriverConfig::kPulseUsForwardMin) +
+			driver_config_.pulse_trim_forward_us;
+		const int lo = std::min(
+			MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs + trim,
 			MaxonDriverConfig::kPulseUsForwardMax);
+		const int pulse_us = static_cast<int>(std::lround(pulse_f));
+		return clamp_int(pulse_us, lo, MaxonDriverConfig::kPulseUsForwardMax);
 	}
 
+	const int trim = static_cast<int>(std::lround(driver_config_.pulse_trim_reverse_us));
 	const double pulse_f =
 		static_cast<double>(MaxonDriverConfig::kPulseUsReverseMin) -
 		norm * static_cast<double>(
-			MaxonDriverConfig::kPulseUsReverseMin - MaxonDriverConfig::kPulseUsReverseMax);
+			MaxonDriverConfig::kPulseUsReverseMin - MaxonDriverConfig::kPulseUsReverseMax) -
+		driver_config_.pulse_trim_reverse_us;
+	const int hi = std::max(
+		MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs - trim,
+		MaxonDriverConfig::kPulseUsReverseMax);
 	const int pulse_us = static_cast<int>(std::lround(pulse_f));
-	return clamp_int(
-		pulse_us,
-		MaxonDriverConfig::kPulseUsReverseMax,
-		MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs);
+	return clamp_int(pulse_us, MaxonDriverConfig::kPulseUsReverseMax, hi);
 }
 
 int MaxonMotorsNode::neutral_pulse_width_us() const

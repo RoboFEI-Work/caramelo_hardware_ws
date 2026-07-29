@@ -93,6 +93,11 @@ namespace mobile_base_hardware {
             read_double_param("min_wheel_rad_per_sec", driver_config_.min_wheel_rad_per_sec);
             read_double_param("max_wheel_rad_per_sec", driver_config_.max_wheel_rad_per_sec);
             read_double_param("command_timeout_s", driver_config_.command_timeout_s);
+            // Trim por ramo (us; +N = ramo mais rapido). Calibrado no chao
+            // 2026-07-29: ramo de FRENTE ~8% lento vs mapa -> guinada de ~23
+            // graus em 3,4m. Ver maxon_motors_node.hpp.
+            read_double_param("pulse_trim_forward_us", driver_config_.pulse_trim_forward_us);
+            read_double_param("pulse_trim_reverse_us", driver_config_.pulse_trim_reverse_us);
             // Encoder: 1024 sinais por volta do motor x gearbox 1:28, decodificacao
             // 1x (SO borda de subida do canal A; sentido pelo nivel de B).
             // 2026-07-27: era x4 (114688) com alerts em TODAS as bordas de A e B —
