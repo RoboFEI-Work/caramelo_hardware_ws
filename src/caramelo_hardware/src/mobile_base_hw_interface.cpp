@@ -48,13 +48,19 @@ namespace mobile_base_hardware {
 
             // Parametros gerais do node/driver (fixos no código)
             driver_config_ = MaxonDriverConfig{};
-            const auto host_it = info_.hardware_parameters.find("pigpio_host");
-            if (host_it != info_.hardware_parameters.end()) {
-                driver_config_.pigpio_host = host_it->second;
-            }
-            const auto port_it = info_.hardware_parameters.find("pigpio_port");
-            if (port_it != info_.hardware_parameters.end()) {
-                driver_config_.pigpio_port = port_it->second;
+            // 2026-07-27: gpiochip_device agora e' LIDO DE VERDADE do URDF (antes
+            // era so' documentado e ignorado — auditoria do port lgpio, bug #5).
+            // -1 = auto-detecta pelo label "rp1" (Pi 5) com fallback gpiochip0.
+            const auto chip_it = info_.hardware_parameters.find("gpiochip_device");
+            if (chip_it != info_.hardware_parameters.end()) {
+                try {
+                    driver_config_.gpiochip_device = std::stoi(chip_it->second);
+                } catch (const std::exception &) {
+                    RCLCPP_WARN(
+                        get_logger(),
+                        "Parametro 'gpiochip_device' invalido ('%s'); usando auto-deteccao.",
+                        chip_it->second.c_str());
+                }
             }
 
             // Mapa afim do ESC em rad/s de RODA (piso e escala cheia), configuravel
@@ -78,8 +84,13 @@ namespace mobile_base_hardware {
             read_double_param("min_wheel_rad_per_sec", driver_config_.min_wheel_rad_per_sec);
             read_double_param("max_wheel_rad_per_sec", driver_config_.max_wheel_rad_per_sec);
             read_double_param("command_timeout_s", driver_config_.command_timeout_s);
-            // Encoder: 1024 sinais por volta do motor, gearbox 1:28 e decodificacao em quadratura x4.
-            driver_config_.encoder_counts_per_wheel_rev = 1024.0 * 28.0 * 4.0;
+            // Encoder: 1024 sinais por volta do motor x gearbox 1:28, decodificacao
+            // 1x (SO borda de subida do canal A; sentido pelo nivel de B).
+            // 2026-07-27: era x4 (114688) com alerts em TODAS as bordas de A e B —
+            // ~730k eventos/s no total, inviavel em userspace (perdia bordas e
+            // matava a thread de PWM do lgpio). 28672/volta sobra para odometria a
+            // 100 Hz. Solucao plena (PIO/halls) registrada como pendencia.
+            driver_config_.encoder_counts_per_wheel_rev = 1024.0 * 28.0;
 
             joint_names_.clear();
             motor_configs_.clear();
@@ -136,7 +147,7 @@ namespace mobile_base_hardware {
             if (!driver_->initialize(driver_config_, motor_configs_)) {
                 RCLCPP_ERROR(
                     get_logger(),
-                    "Falha ao inicializar MaxonMotorsNode. Verifique pigpiod, GPIOs, permissao e alimentacao da base.");
+                    "Falha ao inicializar MaxonMotorsNode. Verifique /dev/gpiochip* (grupo gpio), liblgpio, GPIOs e alimentacao da base.");
                 driver_->shutdown_hardware();
                 driver_.reset();
                 return hardware_interface::CallbackReturn::ERROR;

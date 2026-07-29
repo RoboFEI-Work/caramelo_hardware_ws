@@ -9,6 +9,9 @@
 #include <cstdio>
 #include <cstring>
 
+#include <pthread.h>
+#include <sched.h>
+
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
 #include <lgpio.h>
 #endif
@@ -27,9 +30,18 @@ int clamp_int(int value, int min_v, int max_v)
 	return std::min(std::max(value, min_v), max_v);
 }
 
+int64_t steady_now_ns()
+{
+	return std::chrono::duration_cast<std::chrono::nanoseconds>(
+		std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
-// Trampoline C chamado pelo thread de alertas do lgpio (um thread por chip,
-// entregas em ordem — sem corrida entre linhas A/B do mesmo motor).
+// Trampoline C chamado pelo thread de alertas do lgpio. 2026-07-27: alerts SO
+// na borda de SUBIDA do canal A (decodificacao 1x). A versao anterior (x4 com
+// callbacks por linha) reconstruia a quadratura com o bit da linha irma
+// CONGELADO — qualquer lote com 2+ bordas somava zero e a odometria colapsava
+// em velocidade (o EKF achava o robo parado e o Nav2 rampava comando).
 void encoder_alerts_trampoline(int num_alerts, lgGpioAlert_p alerts, void * userdata)
 {
 	auto * ctx = static_cast<MaxonMotorsNode::CallbackContext *>(userdata);
@@ -37,11 +49,10 @@ void encoder_alerts_trampoline(int num_alerts, lgGpioAlert_p alerts, void * user
 		return;
 	}
 	for (int i = 0; i < num_alerts; ++i) {
-		const int level = alerts[i].report.level;
-		if (level != 0 && level != 1) {
-			continue;  // 2 = watchdog/timeout do lgpio, nao e borda real
+		if (alerts[i].report.level != 1) {
+			continue;  // so' subida real (2 = watchdog/timeout do lgpio)
 		}
-		ctx->self->handle_encoder_alert(ctx->motor_index, ctx->is_line_b, level);
+		ctx->self->handle_encoder_pulse(ctx->motor_index);
 	}
 }
 #endif
@@ -77,9 +88,9 @@ bool MaxonMotorsNode::initialize(
 
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
 	// Abre o gpiochip do header de 40 pinos. Na Pi 5 as linhas ficam no RP1
-	// (label "pinctrl-rp1", chip 4 no kernel Ubuntu 24.04; chips 0-3 sao do
-	// SoC e NAO vao ao header). -1 = varre pelos labels; numero explicito no
-	// URDF (<param name="gpiochip_device">) pula a deteccao.
+	// (label "pinctrl-rp1"; o NUMERO muda com o kernel). -1 = varre pelos
+	// labels; numero explicito no URDF (<param name="gpiochip_device">) pula
+	// a deteccao.
 	int chip_number = driver_config_.gpiochip_device;
 	if (chip_number >= 0) {
 		chip_handle_ = lgGpiochipOpen(chip_number);
@@ -119,15 +130,18 @@ bool MaxonMotorsNode::initialize(
 	motors_.clear();
 	motors_.resize(motor_configs.size());
 	cb_ctx_a_.resize(motor_configs.size());
-	cb_ctx_b_.resize(motor_configs.size());
 	counts_size_ = motor_configs.size();
 	counts_.reset(new std::atomic<int64_t>[counts_size_]);
+	enc_dir_.reset(new std::atomic<int>[counts_size_]);
 	last_counts_.assign(motor_configs.size(), 0);
 
 	for (std::size_t i = 0; i < motor_configs.size(); ++i) {
 		auto & motor = motors_[i];
 		motor.config = motor_configs[i];
 
+		// Rodas ESQUERDAS (GPIO 17/24) montadas espelhadas: comando e feedback
+		// invertidos. ATENCAO: amarrado ao NUMERO do pino — remapear pinos exige
+		// revisar aqui.
 		if (motor.config.pwm_gpio == 17 || motor.config.pwm_gpio == 24) {
 			motor.config.command_sign = -1.0;
 			motor.config.feedback_sign = -1.0;
@@ -141,53 +155,63 @@ bool MaxonMotorsNode::initialize(
 			shutdown_hardware();
 			return false;
 		}
-		lgTxServo(
-			chip_handle_, motor.config.pwm_gpio,
-			neutral_pulse_width_us(), kServoFrequencyHz, 0, 0);
-
-		// Alerta ja reivindica a linha como entrada; LG_BOTH_EDGES cobre a
-		// decodificacao de quadratura (mesmo papel do notify do pigpio).
-		if (lgGpioClaimAlert(
-				chip_handle_, LG_SET_PULL_UP, LG_BOTH_EDGES,
-				motor.config.enc_a_gpio, -1) < 0 ||
-			lgGpioClaimAlert(
-				chip_handle_, LG_SET_PULL_UP, LG_BOTH_EDGES,
-				motor.config.enc_b_gpio, -1) < 0)
-		{
+		if (!send_servo_pulse(i, neutral_pulse_width_us(), true)) {
 			RCLCPP_ERROR(
 				get_logger(),
-				"lgGpioClaimAlert falhou para encoders GPIO %d/%d.",
-				motor.config.enc_a_gpio,
-				motor.config.enc_b_gpio);
+				"lgTxServo inicial (neutro) falhou para PWM GPIO %d.",
+				motor.config.pwm_gpio);
 			shutdown_hardware();
 			return false;
 		}
 
-		const int a0 = lgGpioRead(chip_handle_, motor.config.enc_a_gpio);
-		const int b0 = lgGpioRead(chip_handle_, motor.config.enc_b_gpio);
-		motor.last_state.store(((a0 > 0) << 1) | (b0 > 0));
-		motor.encoder_count.store(0);
-		counts_[i].store(0);
+		// Decodificacao 1x: alerta SO na SUBIDA do canal A; sentido pelo ultimo
+		// comando (enc_dir_). O canal B NAO e' mais reclamado: le-lo por evento
+		// corrompia o sentido em velocidade, e como alert dobraria a taxa de
+		// eventos (x4 total ~730k/s no maximo — inviavel em userspace).
+		if (lgGpioClaimAlert(
+				chip_handle_, LG_SET_PULL_UP, LG_RISING_EDGE,
+				motor.config.enc_a_gpio, -1) < 0)
+		{
+			RCLCPP_ERROR(
+				get_logger(),
+				"Claim do encoder falhou (alert A GPIO %d).",
+				motor.config.enc_a_gpio);
+			shutdown_hardware();
+			return false;
+		}
 
-		cb_ctx_a_[i] = CallbackContext{this, i, false};
-		cb_ctx_b_[i] = CallbackContext{this, i, true};
-		lgGpioSetAlertsFunc(
-			chip_handle_, motor.config.enc_a_gpio,
-			&encoder_alerts_trampoline, &cb_ctx_a_[i]);
-		lgGpioSetAlertsFunc(
-			chip_handle_, motor.config.enc_b_gpio,
-			&encoder_alerts_trampoline, &cb_ctx_b_[i]);
+		counts_[i].store(0);
+		// +1 ate o primeiro comando nao-neutro (roda girada na mao antes disso
+		// conta com modulo certo e sinal "para frente" — limite documentado).
+		enc_dir_[i].store(1);
+
+		cb_ctx_a_[i] = CallbackContext{this, i};
+		if (lgGpioSetAlertsFunc(
+				chip_handle_, motor.config.enc_a_gpio,
+				&encoder_alerts_trampoline, &cb_ctx_a_[i]) < 0)
+		{
+			RCLCPP_ERROR(
+				get_logger(),
+				"lgGpioSetAlertsFunc falhou para encoder A GPIO %d.",
+				motor.config.enc_a_gpio);
+			shutdown_hardware();
+			return false;
+		}
 	}
 
 	last_update_time_ = now();
+	last_cycle_ns_.store(steady_now_ns());
 	initialized_ = true;
 
 	control_thread_running_.store(true);
 	control_thread_ = std::thread(&MaxonMotorsNode::control_loop, this);
+	failsafe_thread_running_.store(true);
+	failsafe_thread_ = std::thread(&MaxonMotorsNode::failsafe_loop, this);
 
 	RCLCPP_INFO(
 		get_logger(),
-		"MaxonMotorsNode inicializado com %zu motores via lgpio no gpiochip%d.",
+		"MaxonMotorsNode inicializado com %zu motores via lgpio no gpiochip%d "
+		"(decode 1x, offsets escalonados, failsafe ativo).",
 		motors_.size(),
 		chip_number);
 	return true;
@@ -204,30 +228,42 @@ bool MaxonMotorsNode::initialize(
 void MaxonMotorsNode::shutdown_hardware()
 {
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	failsafe_thread_running_.store(false);
+	if (failsafe_thread_.joinable()) {
+		failsafe_thread_.join();
+	}
 	control_thread_running_.store(false);
 	if (control_thread_.joinable()) {
 		control_thread_.join();
 	}
 
 	if (chip_handle_ >= 0) {
-		stop_all_motors();
 		// Cancela os callbacks ANTES de destruir os contextos: o thread de
 		// alertas do lgpio pode estar entregando bordas neste exato momento.
 		for (auto & motor : motors_) {
 			lgGpioSetAlertsFunc(chip_handle_, motor.config.enc_a_gpio, nullptr, nullptr);
-			lgGpioSetAlertsFunc(chip_handle_, motor.config.enc_b_gpio, nullptr, nullptr);
-			lgTxServo(chip_handle_, motor.config.pwm_gpio, 0, kServoFrequencyHz, 0, 0);
-			lgGpioFree(chip_handle_, motor.config.pwm_gpio);
-			lgGpioFree(chip_handle_, motor.config.enc_a_gpio);
-			lgGpioFree(chip_handle_, motor.config.enc_b_gpio);
+		}
+		// Shutdown ORDENADO (2026-07-27): neutro -> 120 ms no fio (>=5 pulsos,
+		// o firmware ve o neutro de verdade) -> corta os pulsos (largura 0; o
+		// firmware detecta a perda e PARA os motores) -> libera linhas.
+		// A versao anterior cortava imediatamente apos o neutro: o neutro NUNCA
+		// chegava ao fio.
+		stop_all_motors();
+		std::this_thread::sleep_for(std::chrono::milliseconds(120));
+		for (std::size_t i = 0; i < motors_.size(); ++i) {
+			lgTxServo(
+				chip_handle_, motors_[i].config.pwm_gpio, 0,
+				kServoFrequencyHz, servo_offset_us(i), 0);
+			lgGpioFree(chip_handle_, motors_[i].config.pwm_gpio);
+			lgGpioFree(chip_handle_, motors_[i].config.enc_a_gpio);
 		}
 		lgGpiochipClose(chip_handle_);
 		chip_handle_ = -1;
 	}
 	motors_.clear();
 	cb_ctx_a_.clear();
-	cb_ctx_b_.clear();
 	counts_.reset();
+	enc_dir_.reset();
 	counts_size_ = 0;
 	last_counts_.clear();
 #endif
@@ -245,10 +281,7 @@ void MaxonMotorsNode::set_command_velocity(std::size_t motor_index, double wheel
 		return;
 	}
 	motors_[motor_index].command_rad_s.store(wheel_velocity_rad_s);
-	last_command_ns_.store(
-		std::chrono::duration_cast<std::chrono::nanoseconds>(
-			std::chrono::steady_clock::now().time_since_epoch()).count(),
-		std::memory_order_relaxed);
+	last_command_ns_.store(steady_now_ns(), std::memory_order_relaxed);
 }
 
 bool MaxonMotorsNode::get_velocity(std::size_t motor_index, double & velocity_rad_s) const
@@ -271,6 +304,42 @@ bool MaxonMotorsNode::get_feedback(
 	return true;
 }
 
+bool MaxonMotorsNode::send_servo_pulse(std::size_t motor_index, int pulse_us, bool force)
+{
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	if (chip_handle_ < 0 || motor_index >= motors_.size()) {
+		return false;
+	}
+	auto & motor = motors_[motor_index];
+	// So' reprograma o lgTxServo quando o valor MUDA: cada chamada cancela e
+	// reinicia o trem de pulsos, e re-armar a 100 Hz um trem de 50 Hz caia
+	// DENTRO do pulso alto e truncava Ton (pulso truncado cai na banda de RE
+	// do firmware, que arma re' sem ARMING_TIME — "roda inverte sozinha").
+	if (!force && motor.last_pulse_us == pulse_us) {
+		return true;
+	}
+	const int rc = lgTxServo(
+		chip_handle_, motor.config.pwm_gpio, pulse_us,
+		kServoFrequencyHz, servo_offset_us(motor_index), 0);
+	if (rc < 0) {
+		// NUNCA falhar em silencio: pulso congelado sem log era o mecanismo do
+		// "mandei parar e nao para" quando uma chamada falhava.
+		RCLCPP_ERROR_THROTTLE(
+			get_logger(), *get_clock(), 1000,
+			"lgTxServo falhou (rc=%d) no GPIO %d (pulso %d us).",
+			rc, motor.config.pwm_gpio, pulse_us);
+		return false;
+	}
+	motor.last_pulse_us = pulse_us;
+	return true;
+#else
+	(void)motor_index;
+	(void)pulse_us;
+	(void)force;
+	return false;
+#endif
+}
+
 void MaxonMotorsNode::stop_all_motors()
 {
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
@@ -278,71 +347,105 @@ void MaxonMotorsNode::stop_all_motors()
 		return;
 	}
 
-	for (auto & motor : motors_) {
-		motor.command_rad_s.store(0.0);
-		lgTxServo(
-			chip_handle_, motor.config.pwm_gpio,
-			neutral_pulse_width_us(), kServoFrequencyHz, 0, 0);
+	for (std::size_t i = 0; i < motors_.size(); ++i) {
+		motors_[i].command_rad_s.store(0.0);
+		motors_[i].moving = false;
+		send_servo_pulse(i, neutral_pulse_width_us(), true);
 	}
 #endif
 }
 
-void MaxonMotorsNode::handle_encoder_alert(
-	std::size_t motor_index, bool is_line_b, int level)
+void MaxonMotorsNode::handle_encoder_pulse(std::size_t motor_index)
 {
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
-	if (motor_index >= motors_.size() || motor_index >= counts_size_) {
+	if (motor_index >= counts_size_) {
 		return;
 	}
-
-	// O alerta traz o nivel da PROPRIA linha; o da outra vem do estado anterior.
-	// Todos os callbacks do chip chegam do mesmo thread do lgpio, em ordem —
-	// unico escritor de last_state, entao load+store simples e suficiente.
-	auto & motor = motors_[motor_index];
-	const int prev_state = motor.last_state.load(std::memory_order_relaxed);
-	const int bit_now = (level != 0) ? 1 : 0;
-	const int new_state = is_line_b
-		? ((prev_state & 0x2) | bit_now)
-		: ((bit_now << 1) | (prev_state & 0x1));
-	if (new_state == prev_state) {
-		return;
-	}
-	motor.last_state.store(new_state, std::memory_order_relaxed);
-
-	static constexpr int8_t kQuadTable[16] = {
-		0, -1, 1, 0,
-		1, 0, 0, -1,
-		-1, 0, 0, 1,
-		0, 1, -1, 0
-	};
-	const int delta = kQuadTable[(prev_state << 2) | new_state];
-	if (delta != 0) {
-		counts_[motor_index].fetch_add(delta, std::memory_order_relaxed);
-	}
+	// CAMINHO CRITICO (~27k chamadas/s por roda a 6 rad/s): APENAS o
+	// incremento atomico. Qualquer syscall aqui (a versao anterior fazia
+	// lgGpioRead do canal B) atrasa a fila de alertas e corrompe o sentido —
+	// ver comentario de enc_dir_ no .hpp.
+	counts_[motor_index].fetch_add(
+		enc_dir_[motor_index].load(std::memory_order_relaxed),
+		std::memory_order_relaxed);
 #else
 	(void)motor_index;
-	(void)is_line_b;
-	(void)level;
 #endif
-}
-
-void MaxonMotorsNode::update_feedback(double dt_seconds)
-{
-	(void)dt_seconds;
-	update_cycle();
-}
-
-void MaxonMotorsNode::apply_pwm()
-{
-	update_cycle();
 }
 
 void MaxonMotorsNode::control_loop()
 {
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	// Relogio ABSOLUTO (sleep_until): o sleep_for antigo derivava com a carga
+	// e o periodo real do ciclo esticava sob CPU alta.
+	auto next_wake = std::chrono::steady_clock::now();
 	while (control_thread_running_.load()) {
 		update_cycle();
-		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		next_wake += std::chrono::milliseconds(10);
+		const auto now_tp = std::chrono::steady_clock::now();
+		if (next_wake < now_tp) {
+			next_wake = now_tp + std::chrono::milliseconds(10);
+		}
+		std::this_thread::sleep_until(next_wake);
+	}
+#endif
+}
+
+void MaxonMotorsNode::failsafe_loop()
+{
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	// Trabalho minimo e SEM o mutex do update_cycle (um holder travado e'
+	// exatamente o cenario vigiado). Tenta prioridade RT — sem privilegio,
+	// segue em SCHED_OTHER (ainda util: quase nunca preemptada, quase nao roda).
+	sched_param sp{};
+	sp.sched_priority = 10;
+	if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
+		RCLCPP_WARN_ONCE(
+			get_logger(),
+			"failsafe: sem permissao para SCHED_FIFO (ver docs/raspberry_tempo_real.md); "
+			"seguindo em SCHED_OTHER.");
+	}
+
+	bool pulses_cut = false;
+	while (failsafe_thread_running_.load()) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		if (!initialized_ || chip_handle_ < 0) {
+			continue;
+		}
+		const int64_t stale_ns = steady_now_ns() - last_cycle_ns_.load();
+		if (stale_ns < 250LL * 1000 * 1000) {
+			pulses_cut = false;
+			continue;
+		}
+		if (stale_ns < 1000LL * 1000 * 1000) {
+			// Loop de controle engasgado: forca NEUTRO direto (bypass do mutex).
+			RCLCPP_ERROR_THROTTLE(
+				get_logger(), *get_clock(), 1000,
+				"FAILSAFE: control_loop parado ha %.0f ms — forcando neutro.",
+				stale_ns / 1e6);
+			for (std::size_t i = 0; i < motors_.size(); ++i) {
+				lgTxServo(
+					chip_handle_, motors_[i].config.pwm_gpio,
+					neutral_pulse_width_us(), kServoFrequencyHz,
+					servo_offset_us(i), 0);
+				motors_[i].last_pulse_us = neutral_pulse_width_us();
+			}
+		} else if (!pulses_cut) {
+			// Travado de verdade: corta os pulsos — o firmware dos ESCs detecta
+			// a perda de sinal e PARA os motores (~500 ms).
+			RCLCPP_FATAL(
+				get_logger(),
+				"FAILSAFE: control_loop parado ha %.1f s — cortando os pulsos "
+				"(firmware dos ESCs para os motores).",
+				stale_ns / 1e9);
+			for (std::size_t i = 0; i < motors_.size(); ++i) {
+				lgTxServo(
+					chip_handle_, motors_[i].config.pwm_gpio, 0,
+					kServoFrequencyHz, servo_offset_us(i), 0);
+				motors_[i].last_pulse_us = -1;
+			}
+			pulses_cut = true;
+		}
 	}
 #endif
 }
@@ -362,14 +465,10 @@ void MaxonMotorsNode::update_cycle()
 	std_msgs::msg::Float64MultiArray msg;
 	msg.data.resize(motors_.size(), 0.0);
 
-	// Watchdog de comando: se o write() do ros2_control parar de chegar (processo
-	// travado/morto), comanda neutro em vez de congelar o ultimo PWM. Critico com
-	// este firmware de ESC: perda do sinal PWM provoca reversao total (ver
-	// docs/esc_stm32_comportamento_e_riscos.md), entao manter pulso neutro valido
-	// e sempre a opcao segura.
+	// Watchdog de comando: se o write() do ros2_control parar de chegar,
+	// comanda neutro em vez de congelar o ultimo PWM.
 	const int64_t last_cmd_ns = last_command_ns_.load(std::memory_order_relaxed);
-	const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-		std::chrono::steady_clock::now().time_since_epoch()).count();
+	const int64_t now_ns = steady_now_ns();
 	const bool command_stale =
 		(last_cmd_ns == 0) ||
 		((now_ns - last_cmd_ns) >
@@ -392,15 +491,26 @@ void MaxonMotorsNode::update_cycle()
 		const double cmd_signed = command_stale
 			? 0.0
 			: motor.command_rad_s.load() * motor.config.command_sign;
-		const int pulse_us = velocity_to_pulse_width_us(cmd_signed);
-		lgTxServo(chip_handle_, motor.config.pwm_gpio, pulse_us, kServoFrequencyHz, 0, 0);
+		const int pulse_us = velocity_to_pulse_width_us(cmd_signed, motor.moving);
+		motor.moving = (pulse_us != neutral_pulse_width_us());
+		// Sentido de contagem do encoder acompanha o pulso comandado (espaco de
+		// pulso, uniforme p/ as 4 rodas; feedback_sign converte p/ junta). Em
+		// neutro mantem o ultimo (inercia). Ver enc_dir_ no .hpp.
+		if (pulse_us > neutral_pulse_width_us()) {
+			enc_dir_[i].store(1, std::memory_order_relaxed);
+		} else if (pulse_us < neutral_pulse_width_us()) {
+			enc_dir_[i].store(-1, std::memory_order_relaxed);
+		}
+		send_servo_pulse(i, pulse_us, false);
 	}
 
 	velocity_pub_->publish(msg);
+	last_cycle_ns_.store(now_ns, std::memory_order_relaxed);
 #endif
 }
 
-int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) const
+int MaxonMotorsNode::velocity_to_pulse_width_us(
+	double wheel_velocity_rad_s, bool currently_moving) const
 {
 	// GUARDA CRITICA: o ros2_control inicializa os comandos das juntas como NaN
 	// ate o controlador ativar. NaN aqui passava pelas comparacoes (todas
@@ -410,23 +520,21 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) con
 	if (!std::isfinite(wheel_velocity_rad_s)) {
 		return neutral_pulse_width_us();
 	}
-	// O firmware do ESC (B-G431B-ESC1) roda controle de velocidade em MALHA FECHADA
-	// (FOC + sensores hall) e interpreta o pulso de forma AFIM com um PISO.
-	// Firmware Caramelo 2026-07 (banda morta alargada + speed_min 300 rpm):
-	//   1540us -> piso (speed_min, 300 rpm = 1.12 rad/s de roda)
-	//   2000us -> escala cheia (speed_max, 5364 rpm = 20.06 rad/s de roda)
-	// Inverso correto: pulso = 1540 + (|cmd| - piso) * 460 / (max - piso).
-	// (Os valores 1540/460 vem das constantes kPulseUs*; o piso/max vem do URDF
-	// min/max_wheel_rad_per_sec — manter os TRES sincronizados com o firmware.)
+	// O firmware do ESC (B-G431B-ESC1) roda controle de velocidade em MALHA
+	// FECHADA (FOC + halls) e interpreta o pulso de forma AFIM com um PISO.
+	// speed_min/max do firmware <-> min/max_wheel_rad_per_sec do URDF: manter
+	// SEMPRE casados com o binario gravado nos 4 ESCs (2026-07-27: 650 rpm ->
+	// piso 2.43 rad/s de roda).
 	const double floor_rad = std::max(0.0, driver_config_.min_wheel_rad_per_sec);
 	const double max_rad = std::max(floor_rad + 1e-6, driver_config_.max_wheel_rad_per_sec);
 	const double magnitude = std::abs(wheel_velocity_rad_s);
 
-	// Politica "mais proximo executavel": o ESC nao gira abaixo do piso, entao
-	// comandos menores que meio piso viram neutro (parado) e entre meio piso e o
-	// piso viram o piso. Sem isso qualquer comando minusculo executaria >= 3.74
-	// rad/s e distorceria a mistura cinematica mecanum em manobras lentas.
-	if (magnitude < std::max(1e-9, 0.5 * floor_rad)) {
+	// Politica "mais proximo executavel" COM HISTERESE (2026-07-27): o ESC nao
+	// gira abaixo do piso. LIGAR exige |cmd| >= piso; DESLIGAR so' abaixo de
+	// 0.4*piso. Sem histerese, comandos perto do limiar oscilavam 0 <-> piso a
+	// 100 Hz (chattering) — pior desde que o piso dobrou (650 rpm).
+	const double on_threshold = currently_moving ? 0.4 * floor_rad : floor_rad;
+	if (magnitude < std::max(1e-9, on_threshold)) {
 		return neutral_pulse_width_us();
 	}
 

@@ -25,7 +25,10 @@ joint_state_broadcaster:
 mecanum_controller:
   ros__parameters:
     # Tempo máximo sem receber referência antes de resetar (0 => reseta a cada ciclo)
-    reference_timeout: 0.5
+    # 2026-07-27: 0.5 -> 0.15. O joy_teleop NAO publica zero ao soltar o manche
+    # (confirmado no fonte) — com 0.5 o robo andava +0,5s "sozinho" depois de
+    # soltar. Nav2/velocity_smoother publicam continuamente, nao sao afetados.
+    reference_timeout: 0.15
 
     # Nomes das juntas (command) exatamente como no ros2_control.xacro
     front_left_wheel_command_joint_name: front_left_wheel_joint

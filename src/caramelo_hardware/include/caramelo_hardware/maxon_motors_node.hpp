@@ -29,12 +29,9 @@ struct MaxonMotorConfig
 
 struct MaxonDriverConfig
 {
-	// Mantidos por compatibilidade com URDFs antigos (eram do daemon pigpio,
-	// removido na migracao para a Pi 5); ignorados pelo backend lgpio.
-	std::string pigpio_host;
-	std::string pigpio_port;
 	// /dev/gpiochipN do header de 40 pinos. -1 = auto-detecta pelo label
 	// ("rp1" na Pi 5; fallback gpiochip0 nas Pi 4 e anteriores).
+	// 2026-07-27: agora e' lido de verdade do URDF (<param name="gpiochip_device">).
 	int gpiochip_device = -1;
 	// 2026-07: bandas casadas com o firmware corrigido dos ESCs (banda morta
 	// alargada p/ tolerar o oscilador +-1.5% das placas): forward >=1540us,
@@ -47,16 +44,18 @@ struct MaxonDriverConfig
 	static constexpr int kPulseUsForwardMax = 2000;
 	static constexpr int kPulseUsNeutral =
 		(kPulseUsNeutralMin + kPulseUsNeutralMax) / 2;
-	// 1024 CPR x gearbox 1:28 x quadratura x4 (mesmo valor forcado no on_init
-	// do hardware interface; default alinhado para evitar 4x de erro em uso avulso).
-	double encoder_counts_per_wheel_rev = 114688.0;
-	// Mapa AFIM do firmware Caramelo 2026-07 (B-G431B-ESC1 / MCSDK modificado):
-	//   motor_rpm = 300 + (pulso_us - 1540) * (5364 - 300) / 460   (espelhado no reverso)
-	// Em rad/s de RODA (gearbox 1:28):
-	//   piso  = 300 rpm  -> 1.12 rad/s  (menor velocidade que o ESC executa)
-	//   fundo = 5364 rpm -> 20.06 rad/s (escala cheia em 2000/1000 us)
-	// Ajustaveis pelo URDF (<param name="min/max_wheel_rad_per_sec">) apos calibracao.
-	double min_wheel_rad_per_sec = 1.12;
+	// Encoder em decodificacao 1x (2026-07-27): SO bordas de subida do canal A
+	// (sentido pelo nivel de B). 1024 sinais/volta de motor x gearbox 1:28.
+	// A quadratura x4 (114688) gerava ate ~730k eventos/s no total — inviavel
+	// em userspace (perdia bordas e esfomeava a thread de PWM do lgpio).
+	double encoder_counts_per_wheel_rev = 1024.0 * 28.0;
+	// Mapa AFIM do firmware Caramelo (B-G431B-ESC1 / MCSDK modificado):
+	//   motor_rpm = speed_min + (pulso_us - 1540) * (speed_max - speed_min) / 460
+	// speed_min/max vem do firmware (mc_parameters.c: speed_min_valueRPM) e o
+	// equivalente em rad/s de RODA (gearbox 1:28) vem do URDF
+	// (<param name="min/max_wheel_rad_per_sec">) — manter os DOIS casados com o
+	// firmware gravado nos 4 ESCs. 2026-07-27: speed_min 650 rpm -> 2.43 rad/s.
+	double min_wheel_rad_per_sec = 2.43;
 	double max_wheel_rad_per_sec = 20.06;
 	// Watchdog: sem set_command_velocity() por mais que isso -> PWM neutro
 	// (protege contra morte do write()/controller_manager com PWM congelado).
@@ -79,15 +78,14 @@ public:
 	void set_command_velocity(std::size_t motor_index, double wheel_velocity_rad_s);
 	bool get_velocity(std::size_t motor_index, double & velocity_rad_s) const;
 	bool get_feedback(std::size_t motor_index, double & position_rad, double & velocity_rad_s) const;
-	void update_feedback(double dt_seconds);
-	void apply_pwm();
 
 	void stop_all_motors();
 
-	// Chamado pelo thread de alertas do lgpio a cada borda de encoder ja
-	// filtrada (level 0/1). Decodifica quadratura e acumula em counts_.
-	// Publico apenas para o trampoline C do lgpio; nao usar diretamente.
-	void handle_encoder_alert(std::size_t motor_index, bool is_line_b, int level);
+	// Chamado pelo thread de alertas do lgpio a cada borda de SUBIDA do canal A
+	// (decodificacao 1x; sentido pelo ULTIMO COMANDO nao-neutro — ver
+	// enc_dir_). Publico apenas para o trampoline C do lgpio; nao usar
+	// diretamente.
+	void handle_encoder_pulse(std::size_t motor_index);
 
 	// Contexto passado como userdata aos alertas do lgpio (idem: publico
 	// apenas para o trampoline).
@@ -95,7 +93,6 @@ public:
 	{
 		MaxonMotorsNode * self = nullptr;
 		std::size_t motor_index = 0;
-		bool is_line_b = false;
 	};
 
 private:
@@ -105,14 +102,11 @@ private:
 
 		MotorRuntime(const MotorRuntime & other)
 		: config(other.config),
-			encoder_count(other.encoder_count.load()),
-			previous_count(other.previous_count),
 			position_rad(other.position_rad.load()),
 			velocity_rad_s(other.velocity_rad_s.load()),
 			command_rad_s(other.command_rad_s.load()),
-			last_state(other.last_state.load()),
-			callback_a(other.callback_a),
-			callback_b(other.callback_b)
+			last_pulse_us(other.last_pulse_us),
+			moving(other.moving)
 		{
 		}
 
@@ -120,28 +114,22 @@ private:
 		{
 			if (this != &other) {
 				config = other.config;
-				encoder_count.store(other.encoder_count.load());
-				previous_count = other.previous_count;
 				position_rad.store(other.position_rad.load());
 				velocity_rad_s.store(other.velocity_rad_s.load());
 				command_rad_s.store(other.command_rad_s.load());
-				last_state.store(other.last_state.load());
-				callback_a = other.callback_a;
-				callback_b = other.callback_b;
+				last_pulse_us = other.last_pulse_us;
+				moving = other.moving;
 			}
 			return *this;
 		}
 
 		MotorRuntime(MotorRuntime && other) noexcept
 		: config(std::move(other.config)),
-			encoder_count(other.encoder_count.load()),
-			previous_count(other.previous_count),
 			position_rad(other.position_rad.load()),
 			velocity_rad_s(other.velocity_rad_s.load()),
 			command_rad_s(other.command_rad_s.load()),
-			last_state(other.last_state.load()),
-			callback_a(other.callback_a),
-			callback_b(other.callback_b)
+			last_pulse_us(other.last_pulse_us),
+			moving(other.moving)
 		{
 		}
 
@@ -149,38 +137,51 @@ private:
 		{
 			if (this != &other) {
 				config = std::move(other.config);
-				encoder_count.store(other.encoder_count.load());
-				previous_count = other.previous_count;
 				position_rad.store(other.position_rad.load());
 				velocity_rad_s.store(other.velocity_rad_s.load());
 				command_rad_s.store(other.command_rad_s.load());
-				last_state.store(other.last_state.load());
-				callback_a = other.callback_a;
-				callback_b = other.callback_b;
+				last_pulse_us = other.last_pulse_us;
+				moving = other.moving;
 			}
 			return *this;
 		}
 
 		MaxonMotorConfig config;
-		std::atomic<int64_t> encoder_count{0};
-		int64_t previous_count = 0;
 		std::atomic<double> position_rad{0.0};
 		std::atomic<double> velocity_rad_s{0.0};
 		std::atomic<double> command_rad_s{0.0};
-		std::atomic<int> last_state{0};
-		int callback_a = -1;
-		int callback_b = -1;
+		// Ultimo pulso efetivamente programado (us); -1 = nenhum. Usado para so'
+		// reprogramar o lgTxServo quando o valor MUDA (reprogramar a 100 Hz um
+		// trem de 50 Hz truncava pulsos — auditoria do port, bug #2).
+		int last_pulse_us = -1;
+		// Histerese do piso: ligar exige |cmd| >= floor; desligar so' abaixo de
+		// 0.4*floor (mata o chattering 0 <-> piso a 100 Hz).
+		bool moving = false;
 	};
 
 	void control_loop();
+	void failsafe_loop();
 	void update_cycle();
-	int velocity_to_pulse_width_us(double wheel_velocity_rad_s) const;
+	// force = envia mesmo sem mudanca (init/stop/failsafe). Retorna false se o
+	// lgTxServo falhar (logado com throttle; erro NUNCA e' silencioso).
+	bool send_servo_pulse(std::size_t motor_index, int pulse_us, bool force);
+	int velocity_to_pulse_width_us(double wheel_velocity_rad_s, bool currently_moving) const;
 	int neutral_pulse_width_us() const;
+	// Offset do pulso de cada roda dentro do periodo de 20 ms: 0/5/10/15 ms.
+	// Com offset=0 nas 4, a thread de tx do lgpio agendava as 4 bordas para o
+	// MESMO instante -> skew sistematico por ordem de atendimento (~40-80us =
+	// ate ~2-3 rad/s de diferenca entre rodas; era o "curvar do nada").
+	// Nota 2026-07-27: sonda trocando FL<->FR de slot provou que o slot NAO
+	// influi na partida (+200ms da FL seguiu a RODA, nao o slot -> hardware
+	// FL, provavel hall; ver docs). Qualquer permutacao de slots serve.
+	static int servo_offset_us(std::size_t motor_index)
+	{
+		return static_cast<int>(motor_index) * 5000;
+	}
 
 	MaxonDriverConfig driver_config_;
 	std::vector<MotorRuntime> motors_;
 	std::vector<CallbackContext> cb_ctx_a_;
-	std::vector<CallbackContext> cb_ctx_b_;
 
 	double rad_per_count_ = 0.0;
 	int chip_handle_ = -1;
@@ -190,10 +191,29 @@ private:
 	rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr velocity_pub_;
 
 	std::unique_ptr<std::atomic<int64_t>[]> counts_;
+	// Sentido de contagem por motor (+1/-1), em ESPACO DE PULSO (uniforme p/
+	// as 4 rodas; feedback_sign converte p/ junta). Atualizado no update_cycle
+	// pelo ultimo pulso NAO-neutro; em neutro mantem (inercia segue o ultimo
+	// sentido). 2026-07-27: o sentido vinha de lgGpioRead(B) DENTRO do callback
+	// — a ~27k eventos/s a fila atrasava, o B lido ja tinha mudado e o sinal de
+	// cada contagem virava aleatorio (comando +6 rad/s media MEDIDA -2 a -4
+	// rad/s; encoder andava PARA TRAS com a roda indo para frente). Custo da
+	// troca: girar a roda por fora (mao/empurrao) conta no sentido do ultimo
+	// comando — limite conhecido ate termos contagem por hardware (PIO/halls).
+	std::unique_ptr<std::atomic<int>[]> enc_dir_;
 	std::size_t counts_size_ = 0;
 	std::vector<int64_t> last_counts_;
 	std::thread control_thread_;
 	std::atomic<bool> control_thread_running_{false};
+	// Failsafe (2026-07-27): o lgTxServo com cycles=0 e' AUTONOMO — se o
+	// control_loop congelar, o ultimo pulso continua saindo para sempre, valido
+	// e fresco, e nenhum watchdog (driver ou firmware) dispara. Esta thread
+	// dedicada (trabalho minimo, tenta SCHED_FIFO) vigia o heartbeat do
+	// update_cycle: stale > 250 ms -> neutro; > 1 s -> corta os pulsos (o
+	// firmware entao PARA os motores em ~500 ms).
+	std::thread failsafe_thread_;
+	std::atomic<bool> failsafe_thread_running_{false};
+	std::atomic<int64_t> last_cycle_ns_{0};
 	mutable std::mutex update_cycle_mutex_;
 
 	// Instante (steady clock, ns) do ultimo comando recebido via
