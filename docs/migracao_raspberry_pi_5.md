@@ -58,9 +58,44 @@ O que **não mudou**: tabela de decodificação de quadratura, watchdog de coman
 - Workspace em `~/caramelo_hardware_ws`, branch `rasp_5`, compilando e pronto para teste em bancada com os motores.
 - Com 16 GB de RAM (vs 4 GB da Pi 4): `colcon build` sem restrição de paralelismo, folga para RViz/ferramentas quando necessário, e a remoção do daemon pigpiod tira um processo de tempo-real crítico da disputa por CPU.
 
-## 7. Pendências
+## 7. Bancada 27-29/07/2026 — o que a migração revelou (e os consertos)
 
-1. **Teste em bancada** com os 4 motores + encoders (validar contagem de quadratura e partida dos ESCs com o novo backend).
-2. **Trim de calibração por motor** (`pulse_trim_us`): proposta para corrigir a defasagem de partida observada entre motores espelhados e não-espelhados (tolerância de oscilador dos ESCs, ±22 µs) — a definir após medição em bancada.
-3. **Root read-only (overlayfs)** antes de embarcar no robô, para proteger o cartão contra cortes de energia.
-4. **`git push`** do commit `b8b719c` para `origin/rasp_5` (requer credenciais GitHub na Pi ou push a partir de outro clone).
+A bancada invalidou partes do port original e produziu a arquitetura atual
+(commit 5d72389 + sessão 29/07):
+
+1. **Esticamento de pulso por carga de CPU** (o problema central da Pi 5): o
+   trem servo é thread de SOFTWARE; sob carga a borda de descida atrasa →
+   pulso mais longo → roda de FRENTE acelera (medido 2×!) e a de RÉ freia.
+   Um `colcon build` na Pi fazia rodas GIRAREM SOZINHAS. **Conserto**: RT
+   completo (ver `raspberry_tempo_real.md`: limits.d + `chrt -f 50` no launch
+   + governor performance + `ondemand.service` off). Pós-RT: variação ≤8% sob
+   carga. REGRA: nunca buildar na Pi com o bringup no ar.
+2. **Encoders — canal A com quique na descida**: captura `gpiomon` (15.516
+   ciclos) mostrou 15.304 descidas DUPLAS no A da BR; com o motor energizado o
+   quique vira SUBIDA fantasma → contagem 2× (validado contra marca visual:
+   encoder 11,9 voltas vs 6,1 reais). Debounce de 4 µs NÃO resolve (o fantasma
+   fica a meio-ciclo da subida real — indistinguível por tempo). **Conserto**:
+   contar pelo canal B (limpo: 1 anomalia em 15k ciclos) — tabela de pinos
+   A↔B trocada no `mobile_base_hw_interface.cpp`; o sentido já vem do comando
+   (`enc_dir_`), então nada mais muda. Validação final: 4 rodas encoder ≈
+   marca (~6,1 voltas), decodificação 1× a 28.672 counts/volta.
+3. **Partida da FL +200 ms** (1 ciclo extra de arming do ESC, 1ª tentativa de
+   partida falha): NÃO é software (sonda A/B com troca de slots) e NÃO sumiu
+   com reencaixe do conector hall (29/07). Pendência de hardware: trocar a
+   placa ESC FL↔outra roda p/ isolar placa×motor, ou retry rápido no firmware.
+   Demais rodas partem juntas (spread 30-50 ms, ~330 ms do comando).
+4. **`Ctrl-C` pode deixar o `ros2_control_node` vivo** segurando GPIOs — ver
+   `raspberry_tempo_real.md` §problemas conhecidos.
+
+## 8. Pendências
+
+1. **FL: 1ª partida falha** (+200 ms) — isolar placa×motor (troca de ESC entre
+   rodas) ou retry rápido pós-falha no firmware (esc.c: falha de start →
+   permanecer ARMED em vez de re-armar 200 ms).
+2. **PWM por hardware** (imunidade total a carga): rp1_pwm0 alcança GPIO
+   12/13/18/19 mas está `disabled` e não há overlay de 4 canais de fábrica —
+   exigiria overlay customizado + mover os 4 jumpers de sinal + backend sysfs
+   no driver. Só se o residual de ≤8% incomodar (decisão adiada pelo operador).
+3. **Root read-only (overlayfs)** antes de embarcar (proteção do cartão).
+4. Encoder full-res (quadratura 4× por PIO ou halls via UART) — hoje 1× no
+   canal B atende odometria; registrado para o futuro.

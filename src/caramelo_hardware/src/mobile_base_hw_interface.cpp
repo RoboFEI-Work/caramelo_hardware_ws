@@ -10,21 +10,30 @@
 namespace mobile_base_hardware {
 
     namespace {
+        // 2026-07-29: canais A e B TROCADOS de proposito (contamos pelo B
+        // fisico). Captura com gpiomon provou: o A fisico tem quique na borda
+        // de DESCIDA (15304 descidas duplas em 15516 ciclos na BR); com o
+        // motor energizado o ruido das fases transforma o quique em SUBIDA
+        // fantasma -> contagem 2x (marca 6,1 voltas vs encoder 11,9). O B
+        // fisico e' limpo (1 anomalia em 15k ciclos). Como o sentido vem do
+        // COMANDO (enc_dir_), so o pino "A" (contado) importa — trocar aqui
+        // e' o conserto inteiro. Fiacao fisica: FL A5/B6, FR A27/B22,
+        // BL A16/B26, BR A20/B21.
         constexpr int kPwmFrontLeft = 17;
-        constexpr int kEncAFrontLeft = 5;
-        constexpr int kEncBFrontLeft = 6;
+        constexpr int kEncAFrontLeft = 6;
+        constexpr int kEncBFrontLeft = 5;
 
         constexpr int kPwmFrontRight = 23;
-        constexpr int kEncAFrontRight = 27;
-        constexpr int kEncBFrontRight = 22;
+        constexpr int kEncAFrontRight = 22;
+        constexpr int kEncBFrontRight = 27;
 
         constexpr int kPwmBackLeft = 24;
-        constexpr int kEncABackLeft = 16;
-        constexpr int kEncBBackLeft = 26;
+        constexpr int kEncABackLeft = 26;
+        constexpr int kEncBBackLeft = 16;
 
         constexpr int kPwmBackRight = 25;
-        constexpr int kEncABackRight = 20;
-        constexpr int kEncBBackRight = 21;
+        constexpr int kEncABackRight = 21;
+        constexpr int kEncBBackRight = 20;
     } // namespace
 
     // Esse seria o construtor da Classe.

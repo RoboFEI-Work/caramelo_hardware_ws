@@ -52,11 +52,19 @@ def generate_launch_description():
     control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
+        # 2026-07-29: SCHED_FIFO no processo inteiro — as threads do lgpio (tx
+        # dos pulsos servo + alertas de encoder) herdam a politica e deixam de
+        # perder CPU p/ carga comum. Sem isso os pulsos ESTICAM sob carga
+        # (frente acelera ~2x, re desacelera; provado em bancada 27-29/07).
+        # Requer /etc/security/limits.d/99-realtime.conf (rtprio 98) + reboot —
+        # ver docs/raspberry_tempo_real.md. Se o chrt falhar (limite ausente),
+        # o launch quebra: rodar o doc primeiro.
+        prefix=["chrt -f 50"],
         parameters=[
             robot_controllers,
             {'use_sim_time': use_sim_time},
         ],
-    )    
+    )
     
     joint_state_broadcaster_spawner = Node(
         package="controller_manager",

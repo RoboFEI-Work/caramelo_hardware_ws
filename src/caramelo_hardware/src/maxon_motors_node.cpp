@@ -179,6 +179,17 @@ bool MaxonMotorsNode::initialize(
 			shutdown_hardware();
 			return false;
 		}
+		// Debounce de 4us no kernel: ringing na subida de A gerava 2 eventos por
+		// borda real (BR contava 2x SEMPRE: marca 6,1 voltas vs encoder 11,9;
+		// FR intermitente — bancada 29/07). Borda legitima mais curta do robo:
+		// ~11us a 20 rad/s (fase alta ~5,5us) -> 4us filtra so o eco.
+		if (lgGpioSetDebounce(chip_handle_, motor.config.enc_a_gpio, 4) < 0) {
+			RCLCPP_WARN(
+				get_logger(),
+				"lgGpioSetDebounce falhou p/ GPIO %d — seguindo SEM filtro de eco "
+				"(risco de contagem dobrada).",
+				motor.config.enc_a_gpio);
+		}
 
 		counts_[i].store(0);
 		// +1 ate o primeiro comando nao-neutro (roda girada na mao antes disso
