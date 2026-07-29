@@ -133,6 +133,7 @@ bool MaxonMotorsNode::initialize(
 	counts_size_ = motor_configs.size();
 	counts_.reset(new std::atomic<int64_t>[counts_size_]);
 	enc_dir_.reset(new std::atomic<int>[counts_size_]);
+	neutral_since_ns_.assign(motor_configs.size(), 0);
 	last_counts_.assign(motor_configs.size(), 0);
 
 	for (std::size_t i = 0; i < motor_configs.size(); ++i) {
@@ -192,9 +193,10 @@ bool MaxonMotorsNode::initialize(
 		}
 
 		counts_[i].store(0);
-		// +1 ate o primeiro comando nao-neutro (roda girada na mao antes disso
-		// conta com modulo certo e sinal "para frente" — limite documentado).
-		enc_dir_[i].store(1);
+		// 0 = portao de repouso fechado ate' o primeiro comando nao-neutro
+		// (chilrear de borda parada nao conta; roda girada na mao no boot
+		// tambem nao — limite documentado do dir-por-comando).
+		enc_dir_[i].store(0);
 
 		cb_ctx_a_[i] = CallbackContext{this, i};
 		if (lgGpioSetAlertsFunc(
@@ -506,11 +508,19 @@ void MaxonMotorsNode::update_cycle()
 		motor.moving = (pulse_us != neutral_pulse_width_us());
 		// Sentido de contagem do encoder acompanha o pulso comandado (espaco de
 		// pulso, uniforme p/ as 4 rodas; feedback_sign converte p/ junta). Em
-		// neutro mantem o ultimo (inercia). Ver enc_dir_ no .hpp.
+		// neutro mantem o ultimo por kEncGateNeutralNs (turnoff do ESC +
+		// inercia) e depois FECHA O PORTAO (dir=0): roda estacionada em borda
+		// optica chilreia e integraria fantasma. Ver enc_dir_ no .hpp.
 		if (pulse_us > neutral_pulse_width_us()) {
 			enc_dir_[i].store(1, std::memory_order_relaxed);
+			neutral_since_ns_[i] = 0;
 		} else if (pulse_us < neutral_pulse_width_us()) {
 			enc_dir_[i].store(-1, std::memory_order_relaxed);
+			neutral_since_ns_[i] = 0;
+		} else if (neutral_since_ns_[i] == 0) {
+			neutral_since_ns_[i] = now_ns;
+		} else if (now_ns - neutral_since_ns_[i] > kEncGateNeutralNs) {
+			enc_dir_[i].store(0, std::memory_order_relaxed);
 		}
 		send_servo_pulse(i, pulse_us, false);
 	}
