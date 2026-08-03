@@ -553,13 +553,18 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) con
 	// fronteira de arme do firmware e, com a tolerancia do oscilador de cada
 	// ESC (ate ~+-22us @1500us), a placa pode ler o pulso abaixo do limiar e
 	// nao partir. 30us de margem garante partida mesmo na pior placa medida.
+	// 2026-08-03: a reta agora ANCORA em piso+margem (1570/1430us) casada com
+	// ESC_TON_MAP_MIN/ESC_TREV_MAP_MIN do firmware — antes a margem era so um
+	// clamp e virava +307rpm de referencia no piso (comandado 650, rodava 957).
+	// Mudar a margem/ancora la = mudar aqui.
 	constexpr int kMargemPartidaUs = 30;
 
 	if (wheel_velocity_rad_s > 0.0) {
 		const double pulse_f =
-			static_cast<double>(MaxonDriverConfig::kPulseUsForwardMin) +
+			static_cast<double>(MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs) +
 			norm * static_cast<double>(
-				MaxonDriverConfig::kPulseUsForwardMax - MaxonDriverConfig::kPulseUsForwardMin);
+				MaxonDriverConfig::kPulseUsForwardMax - MaxonDriverConfig::kPulseUsForwardMin -
+				kMargemPartidaUs);
 		const int pulse_us = static_cast<int>(std::lround(pulse_f));
 		return clamp_int(
 			pulse_us,
@@ -568,9 +573,10 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(double wheel_velocity_rad_s) con
 	}
 
 	const double pulse_f =
-		static_cast<double>(MaxonDriverConfig::kPulseUsReverseMin) -
+		static_cast<double>(MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs) -
 		norm * static_cast<double>(
-			MaxonDriverConfig::kPulseUsReverseMin - MaxonDriverConfig::kPulseUsReverseMax);
+			MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs -
+			MaxonDriverConfig::kPulseUsReverseMax);
 	const int pulse_us = static_cast<int>(std::lround(pulse_f));
 	return clamp_int(
 		pulse_us,
