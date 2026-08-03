@@ -19,6 +19,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     use_lidar = LaunchConfiguration('use_lidar')
     use_imu = LaunchConfiguration('use_imu')
+    use_manipulator = LaunchConfiguration('use_manipulator')
     use_mock_components = LaunchConfiguration('use_mock_components')
     
     urdf_path = os.path.join(robot_description_path, 'urdf', 'robots', 'robot.urdf.xacro')
@@ -26,7 +27,7 @@ def generate_launch_description():
     robot_description = ParameterValue(
         Command([
             'xacro ', urdf_path,
-            ' use_manipulator:=true',
+            ' use_manipulator:=', use_manipulator,
             ' use_realsense:=true',
             ' use_mock_components:=', use_mock_components,
             ' visual_mode:=http',
@@ -77,12 +78,14 @@ def generate_launch_description():
         package="controller_manager",
         executable="spawner",
         arguments=["arm_controller"],
+        condition=IfCondition(use_manipulator),
     )
 
     gripper_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
         arguments=["gripper_controller"],
+        condition=IfCondition(use_manipulator),
     )
 
     laser_driver = Node(
@@ -181,6 +184,14 @@ def generate_launch_description():
             'use_imu',
             default_value='true',
             description='Inicia a IMU WIT se true',
+        ),
+        DeclareLaunchArgument(
+            'use_manipulator',
+            default_value='true',
+            description='Inclui o manipulador no URDF/ros2_control e sobe arm/gripper '
+                        'controllers se true. Use false p/ testes so de base (braco '
+                        'desenergizado/desconectado — sem /dev/manip_usb o configure '
+                        'do Arm mata o controller_manager inteiro).',
         ),
         DeclareLaunchArgument(
             'use_mock_components',
