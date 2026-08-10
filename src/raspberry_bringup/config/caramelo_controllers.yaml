@@ -73,6 +73,31 @@ arm_controller:
     state_interfaces:
       - position
     allow_nonzero_velocity_at_trajectory_end: true
+    # 2026-08-10 — CAUSA-RAIZ de "acao saudavel cortada por timeout":
+    # sem estas constraints o JTC roda nos defaults, onde goal_time=0.0
+    # significa ESPERAR PARA SEMPRE ate as tolerancias fecharem, e
+    # stopped_velocity_tolerance=0.01 exige o braco "parado". Como
+    # state_interfaces so tem POSITION, a velocidade e derivada da posicao e o
+    # creep do braco carregado nunca fecha esse limiar.
+    # Medido: place chegou em pre_container com o bloco, erro de 2,1 graus em
+    # joint2 (alvo 0.0, real 0.0369) segurando 2,35 Nm. O braco ESTAVA no
+    # lugar, mas o controller nunca declarou sucesso -> move_group cancelou em
+    # 19,5 s -> place abortou com o bloco na garra.
+    constraints:
+      # 0.0 = nao exigir velocidade nula (nao temos velocidade medida).
+      stopped_velocity_tolerance: 0.0
+      # Teto FINITO depois do fim da trajetoria: chegou perto o bastante em
+      # ate 3 s => sucesso; travou de verdade => aborta em 3 s em vez de
+      # pendurar por 19,5 s.
+      goal_time: 3.0
+      # 0.05 rad = 2,9 graus. Precisa acomodar a queda por carga (2,1 graus
+      # medidos com bloco); a precisao fina da pega vem do alvo cartesiano,
+      # nao daqui.
+      manip_joint1: {goal: 0.05}
+      manip_joint2: {goal: 0.05}
+      manip_joint3: {goal: 0.05}
+      manip_joint4: {goal: 0.05}
+      manip_joint5: {goal: 0.05}
 
 gripper_controller:
   ros__parameters:
@@ -86,3 +111,10 @@ gripper_controller:
     state_interfaces:
       - position
     allow_nonzero_velocity_at_trajectory_end: true
+    constraints:
+      stopped_velocity_tolerance: 0.0
+      goal_time: 2.0
+      # DE PROPOSITO sem tolerancia de posicao nos dedos: fechar sobre um
+      # bloco PARA ANTES do alvo (0.137 medido vs 0.170 comandado) e isso e o
+      # comportamento correto, nao uma falha. Quem julga se pegou e a
+      # verificacao por esforco (1,0 Nm com bloco vs 0,01 vazia).
