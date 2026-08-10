@@ -287,7 +287,15 @@
     <child link="link3"/>
     <origin xyz="0 0 0.185"/>
     <axis xyz="0 1 0"/>
-    <limit lower="-2.6" upper="2.6"
+    <!-- upper 2.6 -> 2.15 (2026-08-10): o servo Dynamixel do joint3 NAO aciona
+         alem de ~2.17 rad (limite de posicao gravado na EEPROM). Medido:
+         pedindo 2.30 ele para em 2.1702 com esforco baixo (-0.70 Nm / 0.29 A)
+         — nao e batente mecanico, ele recusa; na mao passa (ja lido 2.4098).
+         Com upper=2.6 o MoveIt planejava dentro dessa ZONA MORTA e a execucao
+         falhava sem motivo aparente (era a causa de todo GoToNamedPose(home)
+         reprovar). 2.15 deixa o planejador so no que o motor entrega.
+         Se subirem o Max Position Limit na EEPROM do servo, atualize aqui. -->
+    <limit lower="-2.6" upper="2.15"
            effort="10" velocity="1"/>
   </joint>
 
