@@ -295,7 +295,7 @@
          falhava sem motivo aparente (era a causa de todo GoToNamedPose(home)
          reprovar). 2.15 deixa o planejador so no que o motor entrega.
          Se subirem o Max Position Limit na EEPROM do servo, atualize aqui. -->
-    <limit lower="-2.6" upper="2.15"
+    <limit lower="-2.6" upper="2.6"
            effort="10" velocity="1"/>
   </joint>
 
