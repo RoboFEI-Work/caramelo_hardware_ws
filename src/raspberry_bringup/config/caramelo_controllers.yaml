@@ -95,11 +95,16 @@ arm_controller:
       # isso virava tempo morto ENTRE os estagios (o operador notou "demora
       # para comecar o proximo movimento"). Antes deste commit a posicao nem
       # era verificada, entao 0.10 continua mais rigoroso que o historico.
-      manip_joint1: {goal: 0.10}
-      manip_joint2: {goal: 0.10}
-      manip_joint3: {goal: 0.10}
-      manip_joint4: {goal: 0.10}
-      manip_joint5: {goal: 0.10}
+      # 2026-08-15: 0.10 -> 0.30. O 0.30 ja era o valor EM USO na sessao
+      # validada de 12/08 (ajustado por ros2 param set, morreu no reboot).
+      # Com 0.10 o creep do braco carregado (ex.: j3 comandado 2.30 parando
+      # ~0.13 antes, corrente baixa) abortava a fase 1 da prateleira com
+      # GOAL_TOLERANCE_VIOLATED apos o goal_time (teste 2026-08-13).
+      manip_joint1: {goal: 0.30}
+      manip_joint2: {goal: 0.30}
+      manip_joint3: {goal: 0.30}
+      manip_joint4: {goal: 0.30}
+      manip_joint5: {goal: 0.30}
 
 gripper_controller:
   ros__parameters:
