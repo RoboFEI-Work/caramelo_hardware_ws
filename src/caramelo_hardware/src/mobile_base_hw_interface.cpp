@@ -10,30 +10,42 @@
 namespace mobile_base_hardware {
 
     namespace {
-        // 2026-07-29: canais A e B TROCADOS de proposito (contamos pelo B
-        // fisico). Captura com gpiomon provou: o A fisico tem quique na borda
-        // de DESCIDA (15304 descidas duplas em 15516 ciclos na BR); com o
-        // motor energizado o ruido das fases transforma o quique em SUBIDA
-        // fantasma -> contagem 2x (marca 6,1 voltas vs encoder 11,9). O B
-        // fisico e' limpo (1 anomalia em 15k ciclos). Como o sentido vem do
-        // COMANDO (enc_dir_), so o pino "A" (contado) importa — trocar aqui
-        // e' o conserto inteiro. Fiacao fisica: FL A5/B6, FR A27/B22,
-        // BL A16/B26, BR A20/B21.
+        // Fiacao FISICA da PCB (placa e chicote ja fabricados; imutavel).
+        // A nomenclatura aqui e' HONESTA: A e' o A fisico.
+        //
+        // Ate 2026-09-01 estes nomes estavam TROCADOS de proposito, porque a
+        // decodificacao era 1x numa linha so' e o canal A fisico tinha quique na
+        // descida (15304 descidas duplas em 15516 ciclos na BR); contar pelo B
+        // era o conserto inteiro, e o "sentido" vinha do comando. Com quadratura
+        // x4 por amostragem os DOIS canais sao usados, trocar os nomes passaria a
+        // INVERTER o sentido decodificado, e o quique some no filtro de
+        // permanencia (medido: 232+194 transicoes ilegais -> 0). O sentido agora
+        // e' um parametro medido, nao um efeito colateral de nomenclatura.
         constexpr int kPwmFrontLeft = 17;
-        constexpr int kEncAFrontLeft = 6;
-        constexpr int kEncBFrontLeft = 5;
+        constexpr int kEncAFrontLeft = 5;
+        constexpr int kEncBFrontLeft = 6;
 
         constexpr int kPwmFrontRight = 23;
-        constexpr int kEncAFrontRight = 22;
-        constexpr int kEncBFrontRight = 27;
+        constexpr int kEncAFrontRight = 27;
+        constexpr int kEncBFrontRight = 22;
 
         constexpr int kPwmBackLeft = 24;
-        constexpr int kEncABackLeft = 26;
-        constexpr int kEncBBackLeft = 16;
+        constexpr int kEncABackLeft = 16;
+        constexpr int kEncBBackLeft = 26;
 
         constexpr int kPwmBackRight = 25;
-        constexpr int kEncABackRight = 21;
-        constexpr int kEncBBackRight = 20;
+        constexpr int kEncABackRight = 20;
+        constexpr int kEncBBackRight = 21;
+
+        // Sinal do encoder em ESPACO DE PULSO, medido na bancada 2026-09-01:
+        // cutucando cada roda com um pulso de "frente", as quatro contaram
+        // NEGATIVO com sign=+1 na ordem A/B fisica. Girando a mao no sentido de
+        // marcha a frente do robo, FL e BL contaram positivo e FR e BR negativo —
+        // que e' exatamente o espelhamento mecanico das rodas esquerdas, tratado
+        // depois por feedback_sign. Logo, -1 uniforme alinha o decodificador com
+        // o espaco de pulso, preservando a convencao de junta que a odometria ja
+        // usava.
+        constexpr double kEncoderSign = -1.0;
     } // namespace
 
     // Esse seria o construtor da Classe.
@@ -90,6 +102,21 @@ namespace mobile_base_hardware {
                             name, it->second.c_str(), target);
                     }
                 };
+            const auto read_int_param =
+                [this](const char * name, int & target) {
+                    const auto it = info_.hardware_parameters.find(name);
+                    if (it == info_.hardware_parameters.end()) {
+                        return;
+                    }
+                    try {
+                        target = std::stoi(it->second);
+                    } catch (const std::exception &) {
+                        RCLCPP_WARN(
+                            get_logger(),
+                            "Parametro '%s' invalido ('%s'); mantendo %d.",
+                            name, it->second.c_str(), target);
+                    }
+                };
             read_double_param("min_wheel_rad_per_sec", driver_config_.min_wheel_rad_per_sec);
             read_double_param("max_wheel_rad_per_sec", driver_config_.max_wheel_rad_per_sec);
             read_double_param("command_timeout_s", driver_config_.command_timeout_s);
@@ -98,13 +125,19 @@ namespace mobile_base_hardware {
             // graus em 3,4m. Ver maxon_motors_node.hpp.
             read_double_param("pulse_trim_forward_us", driver_config_.pulse_trim_forward_us);
             read_double_param("pulse_trim_reverse_us", driver_config_.pulse_trim_reverse_us);
-            // Encoder: 1024 sinais por volta do motor x gearbox 1:28, decodificacao
-            // 1x (SO borda de subida do canal A; sentido pelo nivel de B).
-            // 2026-07-27: era x4 (114688) com alerts em TODAS as bordas de A e B —
-            // ~730k eventos/s no total, inviavel em userspace (perdia bordas e
-            // matava a thread de PWM do lgpio). 28672/volta sobra para odometria a
-            // 100 Hz. Solucao plena (PIO/halls) registrada como pendencia.
-            driver_config_.encoder_counts_per_wheel_rev = 1024.0 * 28.0;
+            // Encoder: 1024 ciclos por canal por volta do motor x gearbox 1:28 x
+            // quadratura x4 = 114688 counts por volta de RODA. CONFIRMADO na
+            // bancada 2026-09-01 girando cada roda 3 voltas a mao: 112.7k a 113.1k
+            // counts/volta medidos (deficit compativel com erro de marcacao e, na
+            // BR, ~1% de perda por glitch antes do filtro).
+            // A decodificacao 1x anterior existia porque a contagem era por
+            // EVENTO; por amostragem o custo independe da velocidade. Ver
+            // quadrature_decoder.hpp.
+            driver_config_.encoder_counts_per_wheel_rev = 1024.0 * 28.0 * 4.0;
+            read_double_param(
+                "encoder_counts_per_wheel_rev", driver_config_.encoder_counts_per_wheel_rev);
+            read_int_param("encoder_stable_samples", driver_config_.encoder_stable_samples);
+            read_int_param("sampler_cpu", driver_config_.sampler_cpu);
 
             joint_names_.clear();
             motor_configs_.clear();
@@ -116,6 +149,7 @@ namespace mobile_base_hardware {
                 joint_names_.push_back(joint.name);
 
                 MaxonMotorConfig cfg;
+                cfg.encoder_sign = kEncoderSign;
                 if (joint.name == "front_left_wheel_joint") {
                     cfg.pwm_gpio = kPwmFrontLeft;
                     cfg.enc_a_gpio = kEncAFrontLeft;

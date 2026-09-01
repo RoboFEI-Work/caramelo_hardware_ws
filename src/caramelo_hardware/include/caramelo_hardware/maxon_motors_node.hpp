@@ -14,17 +14,30 @@
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 
+#include "caramelo_hardware/quadrature_decoder.hpp"
+#include "caramelo_hardware/rp1_rio.hpp"
+
 namespace mobile_base_hardware
 {
 
 struct MaxonMotorConfig
 {
 	int pwm_gpio = -1;
-	int dir_gpio = -1;
+	// Canais A e B FISICOS do encoder. Desde 2026-09-01 os DOIS sao usados: a
+	// decodificacao e' quadratura x4 por amostragem, entao o sentido e' MEDIDO.
+	// Antes so' um canal era contado e o "sentido" vinha do ultimo comando —
+	// razao pela qual arrastar o robo a mao era impossivel de contar.
 	int enc_a_gpio = -1;
 	int enc_b_gpio = -1;
+	// Sinal do COMANDO: -1 nas rodas montadas espelhadas (esquerdas), para que
+	// um pulso de "frente" mova o robo para frente.
 	double command_sign = 1.0;
+	// Sinal do FEEDBACK em espaco de junta.
 	double feedback_sign = 1.0;
+	// Sinal do ENCODER: converte o sentido decodificado (A/B fisicos) para o
+	// sentido positivo da roda. MEDIDO na bancada 2026-09-01 girando cada roda
+	// a mao no sentido de marcha a frente: FL +1, FR -1, BL +1, BR -1.
+	double encoder_sign = 1.0;
 };
 
 struct MaxonDriverConfig
@@ -44,11 +57,21 @@ struct MaxonDriverConfig
 	static constexpr int kPulseUsForwardMax = 2000;
 	static constexpr int kPulseUsNeutral =
 		(kPulseUsNeutralMin + kPulseUsNeutralMax) / 2;
-	// Encoder em decodificacao 1x (2026-07-27): SO bordas de subida do canal A
-	// (sentido pelo nivel de B). 1024 sinais/volta de motor x gearbox 1:28.
-	// A quadratura x4 (114688) gerava ate ~730k eventos/s no total — inviavel
-	// em userspace (perdia bordas e esfomeava a thread de PWM do lgpio).
-	double encoder_counts_per_wheel_rev = 1024.0 * 28.0;
+	// Encoder em quadratura x4 por AMOSTRAGEM (2026-09-01): 1024 ciclos por
+	// canal por volta de motor x gearbox 1:28 x 4 = 114688 counts por volta de
+	// RODA. Confirmado na bancada girando cada roda 3 voltas a mao: 112.7k a
+	// 113.1k counts/volta medidos, deficit compativel com erro de marcacao.
+	// A contagem por EVENTO (que forcou o x1 anterior) foi abandonada: ver
+	// quadrature_decoder.hpp para o argumento de custo.
+	double encoder_counts_per_wheel_rev = 1024.0 * 28.0 * 4.0;
+	// Amostras de permanencia exigidas para aceitar um estado (filtro de
+	// glitch). A/B medido em 2026-09-01: 8 zera as transicoes ilegais causadas
+	// pelo ruido das fases do motor no chicote do proprio encoder, sem perder
+	// nenhuma borda legitima.
+	int encoder_stable_samples = 8;
+	// Core onde a thread de amostragem roda (-1 = sem afinidade). Ideal: um
+	// core isolado por isolcpus.
+	int sampler_cpu = -1;
 	// Mapa AFIM do firmware Caramelo (B-G431B-ESC1 / MCSDK modificado):
 	//   motor_rpm = speed_min + (pulso_us - 1540) * (speed_max - speed_min) / 460
 	// speed_min/max vem do firmware (mc_parameters.c: speed_min_valueRPM) e o
@@ -88,19 +111,18 @@ public:
 
 	void stop_all_motors();
 
-	// Chamado pelo thread de alertas do lgpio a cada borda de SUBIDA do canal A
-	// (decodificacao 1x; sentido pelo ULTIMO COMANDO nao-neutro — ver
-	// enc_dir_). Publico apenas para o trampoline C do lgpio; nao usar
-	// diretamente.
-	void handle_encoder_pulse(std::size_t motor_index);
-
-	// Contexto passado como userdata aos alertas do lgpio (idem: publico
-	// apenas para o trampoline).
-	struct CallbackContext
+	/// Instantaneo coerente dos contadores do encoder, com o relogio MONOTONICO
+	/// da amostra. Publicado pela thread de amostragem por seqlock.
+	struct EncoderSnapshot
 	{
-		MaxonMotorsNode * self = nullptr;
-		std::size_t motor_index = 0;
+		int64_t counts[4] = {0, 0, 0, 0};
+		uint64_t illegal[4] = {0, 0, 0, 0};
+		uint64_t t_mono_ns = 0;
+		uint64_t samples = 0;
 	};
+
+	/// Le o instantaneo sem lock (seqlock). Devolve false se nao houver dado.
+	bool read_encoder_snapshot(EncoderSnapshot & out) const;
 
 private:
 	struct MotorRuntime
@@ -168,6 +190,10 @@ private:
 
 	void control_loop();
 	void failsafe_loop();
+	/// Laco de amostragem do RIO: le em rajada, alimenta a quadratura e publica
+	/// o instantaneo por seqlock. Roda em SCHED_FIFO alto, idealmente num core
+	/// isolado. Nao faz syscall, nao aloca, nao pega lock.
+	void sampler_loop();
 	void update_cycle();
 	// force = envia mesmo sem mudanca (init/stop/failsafe). Retorna false se o
 	// lgTxServo falhar (logado com throttle; erro NUNCA e' silencioso).
@@ -188,7 +214,16 @@ private:
 
 	MaxonDriverConfig driver_config_;
 	std::vector<MotorRuntime> motors_;
-	std::vector<CallbackContext> cb_ctx_a_;
+
+	// Amostragem do encoder (substitui a contagem por alertas do lgpio).
+	caramelo::Rp1Rio rio_;
+	std::thread sampler_thread_;
+	std::atomic<bool> sampler_running_{false};
+	// Seqlock: o escritor incrementa antes e depois de gravar, entao um leitor
+	// que ve o mesmo valor PAR nas duas pontas leu um instantaneo coerente.
+	// Custa ~50 ns no read(), sem lock e sem bloquear a thread de amostragem.
+	mutable std::atomic<uint32_t> snap_seq_{0};
+	EncoderSnapshot snap_{};
 
 	double rad_per_count_ = 0.0;
 	int chip_handle_ = -1;
@@ -197,19 +232,11 @@ private:
 
 	rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr velocity_pub_;
 
-	std::unique_ptr<std::atomic<int64_t>[]> counts_;
-	// Sentido de contagem por motor (+1/-1), em ESPACO DE PULSO (uniforme p/
-	// as 4 rodas; feedback_sign converte p/ junta). Atualizado no update_cycle
-	// pelo ultimo pulso NAO-neutro; em neutro mantem (inercia segue o ultimo
-	// sentido). 2026-07-27: o sentido vinha de lgGpioRead(B) DENTRO do callback
-	// — a ~27k eventos/s a fila atrasava, o B lido ja tinha mudado e o sinal de
-	// cada contagem virava aleatorio (comando +6 rad/s media MEDIDA -2 a -4
-	// rad/s; encoder andava PARA TRAS com a roda indo para frente). Custo da
-	// troca: girar a roda por fora (mao/empurrao) conta no sentido do ultimo
-	// comando — limite conhecido ate termos contagem por hardware (PIO/halls).
-	std::unique_ptr<std::atomic<int>[]> enc_dir_;
-	std::size_t counts_size_ = 0;
-	std::vector<int64_t> last_counts_;
+	// Ultimo instantaneo consumido pelo update_cycle (so' a thread de controle
+	// toca nestes).
+	EncoderSnapshot last_snap_{};
+	bool have_last_snap_ = false;
+
 	std::thread control_thread_;
 	std::atomic<bool> control_thread_running_{false};
 	// Failsafe (2026-07-27): o lgTxServo com cycles=0 e' AUTONOMO — se o

@@ -22,6 +22,15 @@ namespace mobile_base_hardware
 namespace
 {
 constexpr double kTwoPi = 6.28318530717958647692;
+// Base mecanum de 4 rodas com mapa de pinos vindo de uma PCB fixa.
+constexpr std::size_t kMaxWheels = 4;
+// Amostras lidas por rajada. Ler e RAMIFICAR em cada amostra rende 1.04 MHz
+// porque o core espera a transacao PCIe voltar; em rajada varias ficam em voo e
+// a taxa sobe para ~5.4 MHz (medido na Pi 5 em 2026-09-01).
+constexpr std::size_t kSamplerBurst = 16;
+// Periodo de publicacao do instantaneo (1 kHz): dez vezes o laco de controle,
+// barato o bastante para nao atrapalhar a amostragem.
+constexpr int64_t kSnapshotPeriodNs = 1000000;
 // Frequencia dos pulsos servo para os ESCs (mesma dos 50Hz default do pigpio).
 constexpr int kServoFrequencyHz = 50;
 
@@ -35,27 +44,6 @@ int64_t steady_now_ns()
 	return std::chrono::duration_cast<std::chrono::nanoseconds>(
 		std::chrono::steady_clock::now().time_since_epoch()).count();
 }
-
-#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
-// Trampoline C chamado pelo thread de alertas do lgpio. 2026-07-27: alerts SO
-// na borda de SUBIDA do canal A (decodificacao 1x). A versao anterior (x4 com
-// callbacks por linha) reconstruia a quadratura com o bit da linha irma
-// CONGELADO — qualquer lote com 2+ bordas somava zero e a odometria colapsava
-// em velocidade (o EKF achava o robo parado e o Nav2 rampava comando).
-void encoder_alerts_trampoline(int num_alerts, lgGpioAlert_p alerts, void * userdata)
-{
-	auto * ctx = static_cast<MaxonMotorsNode::CallbackContext *>(userdata);
-	if (ctx == nullptr || ctx->self == nullptr) {
-		return;
-	}
-	for (int i = 0; i < num_alerts; ++i) {
-		if (alerts[i].report.level != 1) {
-			continue;  // so' subida real (2 = watchdog/timeout do lgpio)
-		}
-		ctx->self->handle_encoder_pulse(ctx->motor_index);
-	}
-}
-#endif
 
 }  // namespace
 
@@ -112,9 +100,35 @@ bool MaxonMotorsNode::initialize(
 			}
 		}
 		if (chip_handle_ < 0) {
-			// Pi 4 e anteriores: header no gpiochip0.
-			chip_number = 0;
-			chip_handle_ = lgGpiochipOpen(0);
+			// Pi 4 e anteriores: header no pinctrl-bcm*. Aceitamos, mas SO se o
+			// label confirmar — cair no gpiochip0 as cegas e' perigoso na Pi 5,
+			// onde ele e' o gpio-brcmstb interno do BCM2712 e as linhas 24/25
+			// sao BT_RTS/BT_CTS. Um fallback errado nao "deixa de funcionar":
+			// ele dirige pinos internos da placa achando que fala com os ESCs.
+			// (Aconteceu na bancada de 2026-09-01 com um script de teste.)
+			for (int c = 0; c < 16 && chip_handle_ < 0; ++c) {
+				const int h = lgGpiochipOpen(c);
+				if (h < 0) {
+					continue;
+				}
+				lgChipInfo_t info;
+				if (lgGpioGetChipInfo(h, &info) == LG_OKAY &&
+					std::strstr(info.label, "pinctrl-bcm") != nullptr)
+				{
+					chip_handle_ = h;
+					chip_number = c;
+				} else {
+					lgGpiochipClose(h);
+				}
+			}
+		}
+		if (chip_handle_ < 0) {
+			RCLCPP_ERROR(
+				get_logger(),
+				"Nenhum gpiochip com label de header (pinctrl-rp1 ou pinctrl-bcm*) "
+				"foi encontrado. RECUSANDO abrir um chip as cegas. Rode 'gpiodetect' "
+				"e informe <param name=\"gpiochip_device\"> no ros2_control do URDF.");
+			return false;
 		}
 	}
 	if (chip_handle_ < 0) {
@@ -127,13 +141,19 @@ bool MaxonMotorsNode::initialize(
 		return false;
 	}
 
+	if (motor_configs.size() != kMaxWheels) {
+		RCLCPP_ERROR(
+			get_logger(),
+			"Este driver e' da base mecanum de %zu rodas (o mapa de pinos vem de uma "
+			"PCB fixa); recebeu %zu.",
+			kMaxWheels, motor_configs.size());
+		return false;
+	}
+
 	motors_.clear();
 	motors_.resize(motor_configs.size());
-	cb_ctx_a_.resize(motor_configs.size());
-	counts_size_ = motor_configs.size();
-	counts_.reset(new std::atomic<int64_t>[counts_size_]);
-	enc_dir_.reset(new std::atomic<int>[counts_size_]);
-	last_counts_.assign(motor_configs.size(), 0);
+	last_snap_ = EncoderSnapshot{};
+	have_last_snap_ = false;
 
 	for (std::size_t i = 0; i < motor_configs.size(); ++i) {
 		auto & motor = motors_[i];
@@ -164,55 +184,32 @@ bool MaxonMotorsNode::initialize(
 			return false;
 		}
 
-		// Decodificacao 1x: alerta SO na SUBIDA do canal A; sentido pelo ultimo
-		// comando (enc_dir_). O canal B NAO e' mais reclamado: le-lo por evento
-		// corrompia o sentido em velocidade, e como alert dobraria a taxa de
-		// eventos (x4 total ~730k/s no maximo — inviavel em userspace).
-		if (lgGpioClaimAlert(
-				chip_handle_, LG_SET_PULL_UP, LG_RISING_EDGE,
-				motor.config.enc_a_gpio, -1) < 0)
-		{
-			RCLCPP_ERROR(
-				get_logger(),
-				"Claim do encoder falhou (alert A GPIO %d).",
-				motor.config.enc_a_gpio);
+		// A leitura do encoder NAO passa mais pelo lgpio: e' amostragem direta
+		// do RIO do RP1 (ver sampler_loop). O lgpio fica so' com o PWM.
+		}
+
+	// Amostragem do encoder: mapeia o RIO do RP1 e configura as 8 linhas como
+	// entrada com pull-up e Schmitt. Isso NAO usa lgpio — e' MMIO direto, e por
+	// isso convive com o lgpio segurando as linhas de PWM.
+	{
+		const std::string err = rio_.open_device();
+		if (!err.empty()) {
+			RCLCPP_ERROR(get_logger(), "Amostragem do encoder indisponivel: %s", err.c_str());
 			shutdown_hardware();
 			return false;
 		}
-		// Debounce de 4us no kernel: ringing na subida de A gerava 2 eventos por
-		// borda real (BR contava 2x SEMPRE: marca 6,1 voltas vs encoder 11,9;
-		// FR intermitente — bancada 29/07). Borda legitima mais curta do robo:
-		// ~11us a 20 rad/s (fase alta ~5,5us) -> 4us filtra so o eco.
-		if (lgGpioSetDebounce(chip_handle_, motor.config.enc_a_gpio, 4) < 0) {
-			RCLCPP_WARN(
-				get_logger(),
-				"lgGpioSetDebounce falhou p/ GPIO %d — seguindo SEM filtro de eco "
-				"(risco de contagem dobrada).",
-				motor.config.enc_a_gpio);
-		}
-
-		counts_[i].store(0);
-		// +1 ate o primeiro comando nao-neutro (roda girada na mao antes disso
-		// conta com modulo certo e sinal "para frente" — limite documentado).
-		enc_dir_[i].store(1);
-
-		cb_ctx_a_[i] = CallbackContext{this, i};
-		if (lgGpioSetAlertsFunc(
-				chip_handle_, motor.config.enc_a_gpio,
-				&encoder_alerts_trampoline, &cb_ctx_a_[i]) < 0)
-		{
-			RCLCPP_ERROR(
-				get_logger(),
-				"lgGpioSetAlertsFunc falhou para encoder A GPIO %d.",
-				motor.config.enc_a_gpio);
-			shutdown_hardware();
-			return false;
+		for (const auto & motor : motors_) {
+			rio_.configure_input(static_cast<unsigned>(motor.config.enc_a_gpio), true, true);
+			rio_.configure_input(static_cast<unsigned>(motor.config.enc_b_gpio), true, true);
 		}
 	}
 
 	last_update_time_ = now();
 	last_cycle_ns_.store(steady_now_ns());
 	initialized_ = true;
+
+	sampler_running_.store(true);
+	sampler_thread_ = std::thread(&MaxonMotorsNode::sampler_loop, this);
 
 	control_thread_running_.store(true);
 	control_thread_ = std::thread(&MaxonMotorsNode::control_loop, this);
@@ -221,10 +218,12 @@ bool MaxonMotorsNode::initialize(
 
 	RCLCPP_INFO(
 		get_logger(),
-		"MaxonMotorsNode inicializado com %zu motores via lgpio no gpiochip%d "
-		"(decode 1x, offsets escalonados, failsafe ativo).",
+		"MaxonMotorsNode inicializado: %zu motores, PWM por lgpio no gpiochip%d, "
+		"encoder em quadratura x4 por amostragem do RIO (filtro de %d amostras), "
+		"failsafe ativo.",
 		motors_.size(),
-		chip_number);
+		chip_number,
+		driver_config_.encoder_stable_samples);
 	return true;
 #else
 	(void)motor_configs;
@@ -247,13 +246,15 @@ void MaxonMotorsNode::shutdown_hardware()
 	if (control_thread_.joinable()) {
 		control_thread_.join();
 	}
+	// A thread de amostragem so' toca no mmap do RIO; e' joinable de verdade
+	// (ao contrario da thread de alertas do lgpio, que nao era nossa e podia
+	// ter callback em voo enquanto os vetores eram liberados).
+	sampler_running_.store(false);
+	if (sampler_thread_.joinable()) {
+		sampler_thread_.join();
+	}
 
 	if (chip_handle_ >= 0) {
-		// Cancela os callbacks ANTES de destruir os contextos: o thread de
-		// alertas do lgpio pode estar entregando bordas neste exato momento.
-		for (auto & motor : motors_) {
-			lgGpioSetAlertsFunc(chip_handle_, motor.config.enc_a_gpio, nullptr, nullptr);
-		}
 		// Shutdown ORDENADO (2026-07-27): neutro -> 120 ms no fio (>=5 pulsos,
 		// o firmware ve o neutro de verdade) -> corta os pulsos (largura 0; o
 		// firmware detecta a perda e PARA os motores) -> libera linhas.
@@ -266,17 +267,12 @@ void MaxonMotorsNode::shutdown_hardware()
 				chip_handle_, motors_[i].config.pwm_gpio, 0,
 				kServoFrequencyHz, servo_offset_us(i), 0);
 			lgGpioFree(chip_handle_, motors_[i].config.pwm_gpio);
-			lgGpioFree(chip_handle_, motors_[i].config.enc_a_gpio);
 		}
 		lgGpiochipClose(chip_handle_);
 		chip_handle_ = -1;
 	}
 	motors_.clear();
-	cb_ctx_a_.clear();
-	counts_.reset();
-	enc_dir_.reset();
-	counts_size_ = 0;
-	last_counts_.clear();
+	have_last_snap_ = false;
 #endif
 	initialized_ = false;
 }
@@ -366,24 +362,6 @@ void MaxonMotorsNode::stop_all_motors()
 #endif
 }
 
-void MaxonMotorsNode::handle_encoder_pulse(std::size_t motor_index)
-{
-#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
-	if (motor_index >= counts_size_) {
-		return;
-	}
-	// CAMINHO CRITICO (~27k chamadas/s por roda a 6 rad/s): APENAS o
-	// incremento atomico. Qualquer syscall aqui (a versao anterior fazia
-	// lgGpioRead do canal B) atrasa a fila de alertas e corrompe o sentido —
-	// ver comentario de enc_dir_ no .hpp.
-	counts_[motor_index].fetch_add(
-		enc_dir_[motor_index].load(std::memory_order_relaxed),
-		std::memory_order_relaxed);
-#else
-	(void)motor_index;
-#endif
-}
-
 void MaxonMotorsNode::control_loop()
 {
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
@@ -461,6 +439,109 @@ void MaxonMotorsNode::failsafe_loop()
 #endif
 }
 
+bool MaxonMotorsNode::read_encoder_snapshot(EncoderSnapshot & out) const
+{
+	// Leitura seqlock: o escritor incrementa a sequencia antes e depois de
+	// gravar. Se as duas leituras derem o mesmo valor PAR, o que copiamos no
+	// meio e' coerente. Sem lock, sem bloquear a thread de amostragem, ~50 ns.
+	for (int tentativa = 0; tentativa < 8; ++tentativa) {
+		const uint32_t s1 = snap_seq_.load(std::memory_order_acquire);
+		if ((s1 & 1u) != 0u) {
+			continue;  // escrita em andamento
+		}
+		out = snap_;
+		std::atomic_thread_fence(std::memory_order_acquire);
+		if (snap_seq_.load(std::memory_order_relaxed) == s1) {
+			return out.t_mono_ns != 0;
+		}
+	}
+	return false;
+}
+
+void MaxonMotorsNode::sampler_loop()
+{
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	if (driver_config_.sampler_cpu >= 0) {
+		cpu_set_t set;
+		CPU_ZERO(&set);
+		CPU_SET(driver_config_.sampler_cpu, &set);
+		if (pthread_setaffinity_np(pthread_self(), sizeof(set), &set) != 0) {
+			RCLCPP_WARN(
+				get_logger(), "Afinidade da thread de amostragem no core %d falhou.",
+				driver_config_.sampler_cpu);
+		}
+	}
+	// Prioridade ACIMA do laco de controle (que sobe com chrt -f 50 no launch):
+	// perder amostra de encoder e' pior do que atrasar um ciclo de PWM.
+	sched_param sp{};
+	sp.sched_priority = 80;
+	if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
+		RCLCPP_WARN(
+			get_logger(),
+			"SCHED_FIFO 80 na thread de amostragem falhou; seguindo sem prioridade RT "
+			"(confira /etc/security/limits.d/99-realtime.conf).");
+	} else {
+		// Com kernel.sched_rt_runtime_us no padrao (950000/1000000), uma thread
+		// FIFO que usa 100% da CPU leva um BLACKOUT de 50 ms A CADA SEGUNDO —
+		// medido nesta Pi: pior intervalo 49.99 ms com o throttling ligado, 16 us
+		// com ele desligado. Isso vira perda de contagem em rajada, e o sintoma
+		// aparece como "encoder ruim".
+		FILE * f = std::fopen("/proc/sys/kernel/sched_rt_runtime_us", "r");
+		if (f != nullptr) {
+			long v = 0;
+			if (std::fscanf(f, "%ld", &v) == 1 && v > 0) {
+				RCLCPP_WARN(
+					get_logger(),
+					"kernel.sched_rt_runtime_us=%ld: a thread de amostragem vai levar "
+					"~%.0f ms/s de blackout. Configure kernel.sched_rt_runtime_us=-1 "
+					"(ver tools/setup_pi.sh).",
+					v, (1000000.0 - static_cast<double>(v)) / 1000.0);
+			}
+			std::fclose(f);
+		}
+	}
+
+	std::array<caramelo::ChannelMap, kMaxWheels> canais{};
+	for (std::size_t i = 0; i < motors_.size() && i < kMaxWheels; ++i) {
+		canais[i].a_bit = static_cast<uint8_t>(motors_[i].config.enc_a_gpio);
+		canais[i].b_bit = static_cast<uint8_t>(motors_[i].config.enc_b_gpio);
+		canais[i].sign = static_cast<int8_t>(motors_[i].config.encoder_sign < 0.0 ? -1 : 1);
+	}
+	caramelo::QuadratureDecoder<kMaxWheels> dec(
+		canais, static_cast<uint32_t>(std::max(1, driver_config_.encoder_stable_samples)));
+	dec.reset(rio_.read_in());
+
+	uint32_t buf[kSamplerBurst];
+	uint64_t amostras = 0;
+	int64_t proxima_publicacao = steady_now_ns();
+
+	while (sampler_running_.load(std::memory_order_relaxed)) {
+		for (int rep = 0; rep < 16; ++rep) {
+			rio_.read_burst(buf);
+			for (std::size_t i = 0; i < kSamplerBurst; ++i) {
+				dec.update(buf[i]);
+			}
+		}
+		amostras += 16 * kSamplerBurst;
+
+		const int64_t agora = steady_now_ns();
+		if (agora >= proxima_publicacao) {
+			proxima_publicacao = agora + kSnapshotPeriodNs;
+			snap_seq_.fetch_add(1, std::memory_order_release);
+			std::atomic_thread_fence(std::memory_order_release);
+			for (std::size_t i = 0; i < kMaxWheels; ++i) {
+				snap_.counts[i] = dec.count(i);
+				snap_.illegal[i] = dec.illegal(i);
+			}
+			snap_.t_mono_ns = static_cast<uint64_t>(agora);
+			snap_.samples = amostras;
+			std::atomic_thread_fence(std::memory_order_release);
+			snap_seq_.fetch_add(1, std::memory_order_release);
+		}
+	}
+#endif
+}
+
 void MaxonMotorsNode::update_cycle()
 {
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
@@ -470,11 +551,25 @@ void MaxonMotorsNode::update_cycle()
 		return;
 	}
 
-	const auto now_time = now();
-	const double dt = std::max(1e-6, (now_time - last_update_time_).seconds());
-	last_update_time_ = now_time;
+	last_update_time_ = now();
 	std_msgs::msg::Float64MultiArray msg;
 	msg.data.resize(motors_.size(), 0.0);
+
+	// Feedback vem do INSTANTANEO da thread de amostragem, com o dt do relogio
+	// MONOTONICO da propria amostra.
+	//
+	// Nao usar o relogio ROS aqui: com o chrony configurado como manda o
+	// docs/relogio_chrony.md (makestep 1.0 -1), a Pi da STEP no relogio sempre
+	// que o offset passa de 1 s — e a Pi 5 desta bancada nao tem bateria de RTC,
+	// entao isso acontece de verdade a cada boot. Um step para tras faria
+	// (now - last) negativo, o std::max(1e-6, ...) cravaria 1 us e a velocidade
+	// publicada explodiria. O tempo ROS fica so' para stamp de mensagem.
+	EncoderSnapshot snap;
+	const bool tem_snap = read_encoder_snapshot(snap);
+	double dt_enc = 0.0;
+	if (tem_snap && have_last_snap_ && snap.t_mono_ns > last_snap_.t_mono_ns) {
+		dt_enc = static_cast<double>(snap.t_mono_ns - last_snap_.t_mono_ns) * 1e-9;
+	}
 
 	// Watchdog de comando: se o write() do ros2_control parar de chegar,
 	// comanda neutro em vez de congelar o ultimo PWM.
@@ -487,32 +582,28 @@ void MaxonMotorsNode::update_cycle()
 
 	for (std::size_t i = 0; i < motors_.size(); ++i) {
 		auto & motor = motors_[i];
-		const int64_t count_now = counts_[i].load(std::memory_order_relaxed);
-		const int64_t delta_count = count_now - last_counts_[i];
-		last_counts_[i] = count_now;
-
-		const double delta_rad =
-			static_cast<double>(delta_count) * rad_per_count_ * motor.config.feedback_sign;
-		const double new_position = motor.position_rad.load() + delta_rad;
-		const double new_velocity = delta_rad / dt;
-		motor.position_rad.store(new_position);
-		motor.velocity_rad_s.store(new_velocity);
-		msg.data[i] = new_velocity;
+		if (tem_snap && have_last_snap_) {
+			const int64_t delta_count = snap.counts[i] - last_snap_.counts[i];
+			const double delta_rad =
+				static_cast<double>(delta_count) * rad_per_count_ * motor.config.feedback_sign;
+			motor.position_rad.store(motor.position_rad.load() + delta_rad);
+			if (dt_enc > 1e-6) {
+				motor.velocity_rad_s.store(delta_rad / dt_enc);
+			}
+		}
+		msg.data[i] = motor.velocity_rad_s.load();
 
 		const double cmd_signed = command_stale
 			? 0.0
 			: motor.command_rad_s.load() * motor.config.command_sign;
 		const int pulse_us = velocity_to_pulse_width_us(cmd_signed, motor.moving);
 		motor.moving = (pulse_us != neutral_pulse_width_us());
-		// Sentido de contagem do encoder acompanha o pulso comandado (espaco de
-		// pulso, uniforme p/ as 4 rodas; feedback_sign converte p/ junta). Em
-		// neutro mantem o ultimo (inercia). Ver enc_dir_ no .hpp.
-		if (pulse_us > neutral_pulse_width_us()) {
-			enc_dir_[i].store(1, std::memory_order_relaxed);
-		} else if (pulse_us < neutral_pulse_width_us()) {
-			enc_dir_[i].store(-1, std::memory_order_relaxed);
-		}
 		send_servo_pulse(i, pulse_us, false);
+	}
+
+	if (tem_snap) {
+		last_snap_ = snap;
+		have_last_snap_ = true;
 	}
 
 	velocity_pub_->publish(msg);
