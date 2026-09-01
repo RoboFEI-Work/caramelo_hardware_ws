@@ -556,6 +556,10 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(
 	// fronteira de arme do firmware e, com a tolerancia do oscilador de cada
 	// ESC (ate ~+-22us @1500us), a placa pode ler o pulso abaixo do limiar e
 	// nao partir. 30us de margem garante partida mesmo na pior placa medida.
+	// 2026-08-03: a reta agora ANCORA em piso+margem (1570/1430us) casada com
+	// ESC_TON_MAP_MIN/ESC_TREV_MAP_MIN do firmware — antes a margem era so um
+	// clamp e virava +307rpm de referencia no piso (comandado 650, rodava 957).
+	// Mudar a margem/ancora la = mudar aqui.
 	constexpr int kMargemPartidaUs = 30;
 
 	// Trim por ramo (ver .hpp): positivo = ramo mais rapido. Desloca o mapa E
@@ -564,12 +568,14 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(
 	if (wheel_velocity_rad_s > 0.0) {
 		const int trim = static_cast<int>(std::lround(driver_config_.pulse_trim_forward_us));
 		const double pulse_f =
-			static_cast<double>(MaxonDriverConfig::kPulseUsForwardMin) +
+			static_cast<double>(MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs) +
 			norm * static_cast<double>(
-				MaxonDriverConfig::kPulseUsForwardMax - MaxonDriverConfig::kPulseUsForwardMin) +
-			driver_config_.pulse_trim_forward_us;
-		const int lo = std::min(
-			MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs + trim,
+				MaxonDriverConfig::kPulseUsForwardMax - MaxonDriverConfig::kPulseUsForwardMin -
+				kMargemPartidaUs);
+		const int pulse_us = static_cast<int>(std::lround(pulse_f));
+		return clamp_int(
+			pulse_us,
+			MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs,
 			MaxonDriverConfig::kPulseUsForwardMax);
 		const int pulse_us = static_cast<int>(std::lround(pulse_f));
 		return clamp_int(pulse_us, lo, MaxonDriverConfig::kPulseUsForwardMax);
@@ -577,13 +583,10 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(
 
 	const int trim = static_cast<int>(std::lround(driver_config_.pulse_trim_reverse_us));
 	const double pulse_f =
-		static_cast<double>(MaxonDriverConfig::kPulseUsReverseMin) -
+		static_cast<double>(MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs) -
 		norm * static_cast<double>(
-			MaxonDriverConfig::kPulseUsReverseMin - MaxonDriverConfig::kPulseUsReverseMax) -
-		driver_config_.pulse_trim_reverse_us;
-	const int hi = std::max(
-		MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs - trim,
-		MaxonDriverConfig::kPulseUsReverseMax);
+			MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs -
+			MaxonDriverConfig::kPulseUsReverseMax);
 	const int pulse_us = static_cast<int>(std::lround(pulse_f));
 	return clamp_int(pulse_us, MaxonDriverConfig::kPulseUsReverseMax, hi);
 }
