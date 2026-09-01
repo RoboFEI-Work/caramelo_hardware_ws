@@ -68,8 +68,12 @@ template<std::size_t N>
 class QuadratureDecoder
 {
 public:
-	explicit QuadratureDecoder(const std::array<ChannelMap, N> & channels)
-	: channels_(channels)
+	/// \param channels mapeamento de bits e sinal por roda
+	/// \param stable_samples quantas amostras consecutivas uma palavra precisa
+	///        durar para ser aceita. 1 = sem filtro. Ver comentario de commit().
+	explicit QuadratureDecoder(
+		const std::array<ChannelMap, N> & channels, uint32_t stable_samples = 1)
+	: channels_(channels), stable_(stable_samples < 1 ? 1 : stable_samples)
 	{
 		// Mascara das linhas que nos interessam: o caminho rapido de update()
 		// so' faz trabalho de verdade quando ALGUM desses bits mudou.
@@ -82,42 +86,36 @@ public:
 	void reset(uint32_t word)
 	{
 		last_word_ = word & mask_;
+		run_len_ = 1;
 		for (std::size_t i = 0; i < N; ++i) {
-			states_[i] = state_of(word, channels_[i]);
+			states_[i] = state_of(last_word_, channels_[i]);
 			counts_[i] = 0;
 			illegal_[i] = 0;
+			rejected_ = 0;
 		}
 	}
 
-	/// Processa uma amostra. Retorna true se algum bit observado mudou.
+	/// Processa uma amostra. Retorna true se a palavra observada mudou.
 	///
-	/// O caminho rapido (nada mudou) e' um AND e um compare: na taxa de
-	/// amostragem usada, a esmagadora maioria das amostras cai nele.
+	/// O caminho rapido (nada mudou) e' um AND, um compare e um incremento: na
+	/// taxa de amostragem usada, a esmagadora maioria das amostras cai nele.
 	inline bool update(uint32_t word)
 	{
 		const uint32_t masked = word & mask_;
 		if (masked == last_word_) {
+			++run_len_;
 			return false;
 		}
-		last_word_ = masked;
-		for (std::size_t i = 0; i < N; ++i) {
-			const uint8_t cur = state_of(masked, channels_[i]);
-			const uint8_t prev = states_[i];
-			if (cur == prev) {
-				continue;
-			}
-			states_[i] = cur;
-			const int8_t step = quad_step(prev, cur);
-			if (step == kQuadIllegal) {
-				// Salto diagonal: as duas linhas mudaram entre amostras
-				// consecutivas. Ou perdemos uma amostra, ou as duas linhas
-				// estao chilreando juntas. Nao adivinhamos o sentido: contamos
-				// zero e denunciamos no contador, que e' o sinal de saturacao.
-				++illegal_[i];
-				continue;
-			}
-			counts_[i] += static_cast<int64_t>(step) * channels_[i].sign;
+		// A palavra ANTERIOR acabou de fechar seu tempo de permanencia. So'
+		// entao decidimos se ela era real ou glitch — por isso o commit vem
+		// com um "run" de atraso.
+		if (run_len_ >= stable_) {
+			commit(last_word_);
+		} else {
+			++rejected_;
 		}
+		last_word_ = masked;
+		run_len_ = 1;
 		return true;
 	}
 
@@ -125,6 +123,9 @@ public:
 	uint64_t illegal(std::size_t i) const { return illegal_[i]; }
 	uint8_t state(std::size_t i) const { return states_[i]; }
 	uint32_t mask() const { return mask_; }
+	uint32_t stable_samples() const { return stable_; }
+	/// Palavras descartadas por nao durarem `stable_samples` — glitches filtrados.
+	uint64_t rejected() const { return rejected_; }
 
 	void zero()
 	{
@@ -132,9 +133,47 @@ public:
 			counts_[i] = 0;
 			illegal_[i] = 0;
 		}
+		rejected_ = 0;
 	}
 
 private:
+	/// Aplica a transicao para uma palavra ja considerada estavel.
+	///
+	/// FILTRO DE GLITCH POR PERMANENCIA: uma palavra so' e' aceita se durou
+	/// `stable_` amostras consecutivas. Medido nesta Pi em 2026-09-01, girando
+	/// as rodas a mao: com stable_=1 a roda BR acumulou 1709 transicoes ILEGAIS
+	/// (as duas linhas mudando dentro da mesma janela de 184 ns) em ~332 mil
+	/// counts. Isso NAO e' perda de amostragem — a 5.4 MHz ha ~124 amostras por
+	/// transicao legitima na velocidade de mao. E' qualidade de sinal: ringing e
+	/// diafonia entre os fios A e B do mesmo chicote, exatamente na roda que a
+	/// bancada de julho ja tinha apontado como a pior (15304 descidas duplas em
+	/// 15516 ciclos). Cada ilegal custa 2 counts de erro, entao 1709 delas
+	/// explicam ~1% do deficit medido nessa roda.
+	///
+	/// A escolha de `stable_` tem um teto fisico: na velocidade maxima de roda
+	/// (20.06 rad/s) o intervalo minimo entre transicoes legitimas e' 2.73 us,
+	/// ou ~15 amostras a 5.4 MHz. Manter stable_ bem abaixo disso (4 a 8) filtra
+	/// glitches de ate ~1.5 us sem tocar em borda de verdade.
+	inline void commit(uint32_t stable_word)
+	{
+		for (std::size_t i = 0; i < N; ++i) {
+			const uint8_t cur = state_of(stable_word, channels_[i]);
+			const uint8_t prev = states_[i];
+			if (cur == prev) {
+				continue;
+			}
+			states_[i] = cur;
+			const int8_t step = quad_step(prev, cur);
+			if (step == kQuadIllegal) {
+				// Salto diagonal entre dois estados ESTAVEIS: nao da para
+				// inferir o sentido. Conta zero e denuncia no contador.
+				++illegal_[i];
+				continue;
+			}
+			counts_[i] += static_cast<int64_t>(step) * channels_[i].sign;
+		}
+	}
+
 	static inline uint8_t state_of(uint32_t word, const ChannelMap & ch)
 	{
 		const uint8_t a = static_cast<uint8_t>((word >> ch.a_bit) & 1u);
@@ -146,7 +185,10 @@ private:
 	std::array<uint8_t, N> states_{};
 	std::array<int64_t, N> counts_{};
 	std::array<uint64_t, N> illegal_{};
+	uint64_t rejected_ = 0;
 	uint32_t last_word_ = 0;
+	uint32_t run_len_ = 0;
+	uint32_t stable_ = 1;
 	uint32_t mask_ = 0;
 };
 

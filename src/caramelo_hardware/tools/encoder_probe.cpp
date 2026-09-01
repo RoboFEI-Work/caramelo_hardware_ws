@@ -83,6 +83,7 @@ constexpr WheelPins kPwm[kWheels] = {
 constexpr int kNeutroUs = 1500;
 constexpr int kServoHz = 50;
 
+uint32_t g_stable = 1;   // amostras de permanencia exigidas (filtro de glitch)
 std::atomic<bool> g_stop{false};
 void on_signal(int) { g_stop.store(true); }
 
@@ -313,7 +314,7 @@ int mode_count(caramelo::Rp1Rio & rio, double secs, double counts_per_rev)
 		chans[i].b_bit = static_cast<uint8_t>(kPins[i].b_gpio);
 		chans[i].sign = 1;   // sinal por roda e' calibrado por MEDICAO, nao deduzido
 	}
-	caramelo::QuadratureDecoder<kWheels> dec(chans);
+	caramelo::QuadratureDecoder<kWheels> dec(chans, g_stable);
 	dec.reset(rio.read_in());
 
 	const uint64_t t0 = now_ns();
@@ -388,7 +389,7 @@ int mode_nudge(caramelo::Rp1Rio & rio, int pulse_us, double hold_s)
 		chans[i].b_bit = static_cast<uint8_t>(kPins[i].b_gpio);
 		chans[i].sign = 1;
 	}
-	caramelo::QuadratureDecoder<kWheels> dec(chans);
+	caramelo::QuadratureDecoder<kWheels> dec(chans, g_stable);
 	dec.reset(rio.read_in());
 
 	constexpr std::size_t kBurst = 16;
@@ -473,6 +474,7 @@ int main(int argc, char ** argv)
 		else if (a == "--cpu" && i + 1 < argc) { cpu = std::atoi(argv[++i]); }
 		else if (a == "--cpr" && i + 1 < argc) { cpr = std::atof(argv[++i]); }
 		else if (a == "--chip" && i + 1 < argc) { chip = std::atoi(argv[++i]); }
+		else if (a == "--stable" && i + 1 < argc) { g_stable = static_cast<uint32_t>(std::atoi(argv[++i])); }
 		else if (a == "--rt") { rt = true; }
 		else if (a == "--hold-neutral") { hold_neutral = true; }
 		else if (a == "--nudge") { do_nudge = true; hold_neutral = true; }
