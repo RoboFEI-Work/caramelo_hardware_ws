@@ -1,0 +1,329 @@
+// encoder_probe — bancada dos encoders do Caramelo, standalone.
+//
+// Roda FORA do ros2_control: sem controller_manager, sem URDF, sem EKF. Usa o
+// MESMO QuadratureDecoder do driver de producao, entao o que se mede aqui e' o
+// que o robo vai fazer.
+//
+// Nao toca em nenhuma linha de PWM (17/23/24/25): so' le os 8 canais de encoder.
+// Ainda assim, recusa rodar se houver um ros2_control_node vivo — dois donos do
+// mesmo GPIO e' diagnostico perdido.
+//
+// Modos:
+//   --info              estado dos pads/funcao/niveis das 8 linhas
+//   --edges  <segundos> bordas CRUAS por linha (mede o chilrear do encoder parado)
+//   --count  <segundos> contagem em quadratura x4 por roda, com voltas e ilegais
+//
+// Exemplos:
+//   encoder_probe --info
+//   encoder_probe --edges 10
+//   encoder_probe --count 30 --rt --cpu 3
+
+#define _GNU_SOURCE
+#include <atomic>
+#include <cinttypes>
+#include <cmath>
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <dirent.h>
+#include <sched.h>
+#include <string>
+#include <sys/mman.h>
+#include <unistd.h>
+
+#include "caramelo_hardware/quadrature_decoder.hpp"
+#include "caramelo_hardware/rp1_rio.hpp"
+
+namespace
+{
+
+constexpr std::size_t kWheels = 4;
+
+struct WheelPins
+{
+	const char * name;
+	unsigned a_gpio;   // canal A FISICO
+	unsigned b_gpio;   // canal B FISICO
+};
+
+// Fiacao fisica da PCB (imutavel: placa e chicote ja fabricados).
+// A nomenclatura aqui e' HONESTA — A e' o A fisico. O sentido de cada roda e'
+// resolvido por sinal explicito, nao trocando os nomes dos canais.
+constexpr WheelPins kPins[kWheels] = {
+	{"FL", 5, 6},
+	{"FR", 27, 22},
+	{"BL", 16, 26},
+	{"BR", 20, 21},
+};
+
+// 1024 ciclos por canal por volta de motor x reducao 28:1 x decodificacao 4x.
+// E' EXATAMENTE isso que o teste das 10 voltas a mao vai confirmar ou refutar:
+// "1024 counts/volta, 2 canais" admite ler como 1024 ciclos POR CANAL (4096 em
+// quadratura) ou 1024 ja em quadratura (256 ciclos por canal). E a reducao
+// nominal "28:1" tambem e' suspeita: redutor planetario costuma ter razao
+// fracionaria. O teste mede o PRODUTO, que e' a constante que o software usa.
+constexpr double kCountsPerWheelRevX4 = 1024.0 * 28.0 * 4.0;
+
+std::atomic<bool> g_stop{false};
+void on_signal(int) { g_stop.store(true); }
+
+uint64_t now_ns()
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return static_cast<uint64_t>(ts.tv_sec) * 1000000000ull + static_cast<uint64_t>(ts.tv_nsec);
+}
+
+/// Recusa rodar junto com o stack de controle: dois donos do mesmo GPIO
+/// produzem "Device or resource busy" e medicoes que nao querem dizer nada.
+bool ros2_control_is_running()
+{
+	DIR * d = opendir("/proc");
+	if (d == nullptr) { return false; }
+	bool found = false;
+	struct dirent * e;
+	while (!found && (e = readdir(d)) != nullptr) {
+		if (e->d_name[0] < '0' || e->d_name[0] > '9') { continue; }
+		char path[256];
+		std::snprintf(path, sizeof(path), "/proc/%s/cmdline", e->d_name);
+		FILE * f = std::fopen(path, "rb");
+		if (f == nullptr) { continue; }
+		char buf[512] = {0};
+		const std::size_t n = std::fread(buf, 1, sizeof(buf) - 1, f);
+		std::fclose(f);
+		for (std::size_t i = 0; i + 1 < n; ++i) { if (buf[i] == '\0') { buf[i] = ' '; } }
+		if (std::strstr(buf, "ros2_control_node") != nullptr) { found = true; }
+	}
+	closedir(d);
+	return found;
+}
+
+void apply_realtime(int cpu)
+{
+	if (cpu >= 0) {
+		cpu_set_t set;
+		CPU_ZERO(&set);
+		CPU_SET(cpu, &set);
+		if (sched_setaffinity(0, sizeof(set), &set) != 0) { std::perror("sched_setaffinity"); }
+	}
+	struct sched_param sp;
+	sp.sched_priority = 80;
+	if (sched_setscheduler(0, SCHED_FIFO, &sp) != 0) {
+		std::perror("SCHED_FIFO (seguindo sem RT)");
+	} else {
+		// ATENCAO: com kernel.sched_rt_runtime_us no padrao (950000/1000000) uma
+		// thread FIFO que usa 100% da CPU leva um BLACKOUT de 50 ms A CADA
+		// SEGUNDO. Medido nesta Pi: pior intervalo 49.99 ms com o throttling
+		// ligado, 16 us com ele desligado. Sem tratar isso, o decodificador
+		// perde contagens em rajada e o sintoma vira "encoder ruim".
+		FILE * f = std::fopen("/proc/sys/kernel/sched_rt_runtime_us", "r");
+		if (f != nullptr) {
+			long v = 0;
+			if (std::fscanf(f, "%ld", &v) == 1 && v > 0) {
+				std::printf(
+					"AVISO: kernel.sched_rt_runtime_us=%ld -> blackout de ~%.0f ms/s na thread RT.\n"
+					"       Para medir de verdade: sudo sysctl -w kernel.sched_rt_runtime_us=-1\n",
+					v, (1000000.0 - static_cast<double>(v)) / 1000.0);
+			}
+			std::fclose(f);
+		}
+		mlockall(MCL_CURRENT | MCL_FUTURE);
+	}
+}
+
+int mode_info(caramelo::Rp1Rio & rio)
+{
+	const uint32_t in = rio.read_in();
+	const uint32_t oe = rio.read_oe();
+	std::printf("RIO_IN = 0x%08x   RIO_OE = 0x%08x\n\n", in, oe);
+	std::printf("%-4s %-4s %-5s %-6s %-9s %-6s %s\n",
+		"roda", "gpio", "canal", "nivel", "funcsel", "pad", "flags do pad");
+	for (const auto & w : kPins) {
+		for (int ch = 0; ch < 2; ++ch) {
+			const unsigned g = (ch == 0) ? w.a_gpio : w.b_gpio;
+			const uint32_t pad = rio.read_pad(g);
+			const uint32_t ctrl = rio.read_ctrl(g);
+			std::printf("%-4s %-4u %-5s %-6u %-9u 0x%02x   %s%s%s%s%s\n",
+				w.name, g, (ch == 0) ? "A" : "B", (in >> g) & 1u, ctrl & 0x1fu, pad,
+				(pad & caramelo::kPadIe) ? "IE " : "",
+				(pad & caramelo::kPadOd) ? "OD " : "",
+				(pad & caramelo::kPadPue) ? "PULLUP " : "",
+				(pad & caramelo::kPadPde) ? "PULLDOWN " : "",
+				(pad & caramelo::kPadSchmitt) ? "SCHMITT" : "");
+		}
+	}
+	return 0;
+}
+
+int mode_edges(caramelo::Rp1Rio & rio, double secs)
+{
+	// Conta transicoes CRUAS por linha, sem interpretar quadratura. E' assim que
+	// se quantifica o chilrear (~60 kHz medidos em julho com o motor energizado
+	// e a roda parada em cima de uma borda optica) e a contagem dobrada por
+	// ringing na borda.
+	uint32_t mask = 0;
+	for (const auto & w : kPins) { mask |= (1u << w.a_gpio) | (1u << w.b_gpio); }
+
+	uint64_t edges[32] = {0};
+	uint32_t prev = rio.read_in() & mask;
+	const uint64_t t0 = now_ns();
+	const uint64_t tend = t0 + static_cast<uint64_t>(secs * 1e9);
+	uint64_t samples = 0;
+
+	while (!g_stop.load(std::memory_order_relaxed)) {
+		for (int i = 0; i < 256; ++i) {
+			const uint32_t cur = rio.read_in() & mask;
+			if (cur != prev) {
+				uint32_t diff = cur ^ prev;
+				while (diff) {
+					const int b = __builtin_ctz(diff);
+					++edges[b];
+					diff &= diff - 1;
+				}
+				prev = cur;
+			}
+		}
+		samples += 256;
+		if (now_ns() >= tend) { break; }
+	}
+	const double dur = static_cast<double>(now_ns() - t0) / 1e9;
+
+	std::printf("janela=%.2f s  amostras=%" PRIu64 "  taxa=%.2f MHz\n\n",
+		dur, samples, (static_cast<double>(samples) / dur) / 1e6);
+	std::printf("%-4s %-5s %-5s %14s %12s\n", "roda", "canal", "gpio", "bordas", "bordas/s");
+	for (const auto & w : kPins) {
+		for (int ch = 0; ch < 2; ++ch) {
+			const unsigned g = (ch == 0) ? w.a_gpio : w.b_gpio;
+			std::printf("%-4s %-5s %-5u %14" PRIu64 " %12.1f\n",
+				w.name, (ch == 0) ? "A" : "B", g, edges[g],
+				static_cast<double>(edges[g]) / dur);
+		}
+	}
+	return 0;
+}
+
+int mode_count(caramelo::Rp1Rio & rio, double secs, double counts_per_rev)
+{
+	std::array<caramelo::ChannelMap, kWheels> chans{};
+	for (std::size_t i = 0; i < kWheels; ++i) {
+		chans[i].a_bit = static_cast<uint8_t>(kPins[i].a_gpio);
+		chans[i].b_bit = static_cast<uint8_t>(kPins[i].b_gpio);
+		chans[i].sign = 1;   // sinal por roda e' calibrado por MEDICAO, nao deduzido
+	}
+	caramelo::QuadratureDecoder<kWheels> dec(chans);
+	dec.reset(rio.read_in());
+
+	const uint64_t t0 = now_ns();
+	const uint64_t tend = t0 + static_cast<uint64_t>(secs * 1e9);
+	uint64_t next_print = t0 + 1000000000ull;
+	uint64_t samples = 0, worst_gap = 0, tprev = t0;
+
+	std::printf("contando %.0f s (quadratura x4, %.0f counts por volta de roda)\n",
+		secs, counts_per_rev);
+	std::printf("gire as rodas a mao — Ctrl-C encerra antes do prazo\n\n");
+
+	while (!g_stop.load(std::memory_order_relaxed)) {
+		for (int i = 0; i < 256; ++i) { dec.update(rio.read_in()); }
+		samples += 256;
+		const uint64_t t = now_ns();
+		const uint64_t gap = t - tprev;
+		tprev = t;
+		if (gap > worst_gap) { worst_gap = gap; }
+		if (t >= next_print) {
+			next_print += 1000000000ull;
+			std::printf("[%5.1fs]", static_cast<double>(t - t0) / 1e9);
+			for (std::size_t i = 0; i < kWheels; ++i) {
+				std::printf("  %s=%+9" PRId64 " (%+7.3f volta)",
+					kPins[i].name, dec.count(i),
+					static_cast<double>(dec.count(i)) / counts_per_rev);
+			}
+			std::printf("\n");
+			std::fflush(stdout);
+		}
+		if (t >= tend) { break; }
+	}
+
+	const double dur = static_cast<double>(now_ns() - t0) / 1e9;
+	std::printf("\n=== resultado ===\n");
+	std::printf("janela=%.2f s  amostras=%" PRIu64 "  taxa=%.2f MHz  pior gap(lote de 256)=%" PRIu64 " ns\n",
+		dur, samples, (static_cast<double>(samples) / dur) / 1e6, worst_gap);
+	std::printf("%-4s %14s %12s %14s\n", "roda", "counts(x4)", "voltas", "ilegais");
+	for (std::size_t i = 0; i < kWheels; ++i) {
+		std::printf("%-4s %14" PRId64 " %12.4f %14" PRIu64 "\n",
+			kPins[i].name, dec.count(i),
+			static_cast<double>(dec.count(i)) / counts_per_rev, dec.illegal(i));
+	}
+	std::printf("\nilegais > 0 = as duas linhas mudaram entre amostras consecutivas\n"
+		"(perda de amostra ou chilrear simultaneo). Em regime saudavel deve ser 0.\n");
+	return 0;
+}
+
+void usage()
+{
+	std::printf(
+		"uso: encoder_probe [--info | --edges SEG | --count SEG] [--rt] [--cpu N] [--cpr N]\n"
+		"  --info        estado de pad/funcao/nivel das 8 linhas de encoder\n"
+		"  --edges SEG   bordas cruas por linha (mede chilrear e ringing)\n"
+		"  --count SEG   contagem em quadratura x4 por roda\n"
+		"  --rt          SCHED_FIFO 80 + mlockall\n"
+		"  --cpu N       fixa a thread no core N\n"
+		"  --cpr N       counts por volta de roda em x4 (default %.0f)\n",
+		kCountsPerWheelRevX4);
+}
+
+}  // namespace
+
+int main(int argc, char ** argv)
+{
+	enum class Mode { None, Info, Edges, Count } mode = Mode::None;
+	double secs = 10.0;
+	double cpr = kCountsPerWheelRevX4;
+	bool rt = false;
+	int cpu = -1;
+
+	for (int i = 1; i < argc; ++i) {
+		const std::string a = argv[i];
+		if (a == "--info") { mode = Mode::Info; }
+		else if (a == "--edges" && i + 1 < argc) { mode = Mode::Edges; secs = std::atof(argv[++i]); }
+		else if (a == "--count" && i + 1 < argc) { mode = Mode::Count; secs = std::atof(argv[++i]); }
+		else if (a == "--cpu" && i + 1 < argc) { cpu = std::atoi(argv[++i]); }
+		else if (a == "--cpr" && i + 1 < argc) { cpr = std::atof(argv[++i]); }
+		else if (a == "--rt") { rt = true; }
+		else { usage(); return 2; }
+	}
+	if (mode == Mode::None) { usage(); return 2; }
+
+	if (ros2_control_is_running()) {
+		std::fprintf(stderr,
+			"RECUSANDO: ha um ros2_control_node vivo. Dois donos do mesmo GPIO nao medem nada.\n"
+			"Derrube o bringup antes (SIGINT no grupo de processos).\n");
+		return 3;
+	}
+
+	std::signal(SIGINT, on_signal);
+	std::signal(SIGTERM, on_signal);
+
+	caramelo::Rp1Rio rio;
+	const std::string err = rio.open_device();
+	if (!err.empty()) {
+		std::fprintf(stderr, "%s\n", err.c_str());
+		return 1;
+	}
+
+	// Entrada + pull-up + Schmitt nas 8 linhas. Nenhuma linha de PWM e' tocada.
+	for (const auto & w : kPins) {
+		rio.configure_input(w.a_gpio, true, true);
+		rio.configure_input(w.b_gpio, true, true);
+	}
+
+	if (rt) { apply_realtime(cpu); }
+
+	switch (mode) {
+		case Mode::Info: return mode_info(rio);
+		case Mode::Edges: return mode_edges(rio, secs);
+		case Mode::Count: return mode_count(rio, secs, cpr);
+		default: return 2;
+	}
+}
