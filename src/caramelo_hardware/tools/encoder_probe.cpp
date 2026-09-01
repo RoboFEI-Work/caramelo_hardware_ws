@@ -424,7 +424,11 @@ int mode_nudge(caramelo::Rp1Rio & rio, int pulse_us, double hold_s)
 			const int64_t d = dec.count(i) - antes[i];
 			std::printf("  %s=%+8" PRId64, kPins[i].name, d);
 		}
-		std::printf("\n");
+		std::printf("  | ilegais:");
+		for (std::size_t i = 0; i < kWheels; ++i) {
+			std::printf(" %s=%" PRIu64, kPins[i].name, dec.illegal(i));
+		}
+		std::printf("  descartadas=%" PRIu64 "\n", dec.rejected());
 		std::fflush(stdout);
 	}
 
