@@ -72,7 +72,7 @@ public:
 	/// \param stable_samples quantas amostras consecutivas uma palavra precisa
 	///        durar para ser aceita. 1 = sem filtro. Ver comentario de commit().
 	explicit QuadratureDecoder(
-		const std::array<ChannelMap, N> & channels, uint32_t stable_samples = 1)
+		const std::array<ChannelMap, N> & channels, uint32_t stable_samples = 8)
 	: channels_(channels), stable_(stable_samples < 1 ? 1 : stable_samples)
 	{
 		// Mascara das linhas que nos interessam: o caminho rapido de update()

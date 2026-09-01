@@ -83,7 +83,7 @@ constexpr WheelPins kPwm[kWheels] = {
 constexpr int kNeutroUs = 1500;
 constexpr int kServoHz = 50;
 
-uint32_t g_stable = 1;   // amostras de permanencia exigidas (filtro de glitch)
+uint32_t g_stable = 8;   // amostras de permanencia exigidas (filtro de glitch)
 std::atomic<bool> g_stop{false};
 void on_signal(int) { g_stop.store(true); }
 
