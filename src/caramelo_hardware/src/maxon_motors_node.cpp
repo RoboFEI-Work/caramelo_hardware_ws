@@ -659,7 +659,9 @@ void MaxonMotorsNode::update_cycle()
 		const double cmd_signed = command_stale
 			? 0.0
 			: motor.command_rad_s.load() * motor.config.command_sign;
-		const int pulse_us = velocity_to_pulse_width_us(cmd_signed, motor.moving.load(std::memory_order_relaxed));
+		const int pulse_us = velocity_to_pulse_width_us(
+			cmd_signed, motor.moving.load(std::memory_order_relaxed),
+			static_cast<int>(std::lround(motor.config.pulse_offset_us)));
 		motor.moving.store(pulse_us != neutral_pulse_width_us(), std::memory_order_relaxed);
 		send_servo_pulse(i, pulse_us, false);
 	}
@@ -685,7 +687,7 @@ void MaxonMotorsNode::update_cycle()
 }
 
 int MaxonMotorsNode::velocity_to_pulse_width_us(
-	double wheel_velocity_rad_s, bool currently_moving) const
+	double wheel_velocity_rad_s, bool currently_moving, int pulse_offset_us) const
 {
 	// GUARDA CRITICA: o ros2_control inicializa os comandos das juntas como NaN
 	// ate o controlador ativar. NaN aqui passava pelas comparacoes (todas
@@ -742,14 +744,17 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(
 	// NUMERICO precisa ser reconfirmado no teste reto de 3,4m.
 	if (wheel_velocity_rad_s > 0.0) {
 		const int trim = static_cast<int>(std::lround(driver_config_.pulse_trim_forward_us));
+		// offset da placa: soma nos DOIS ramos (compensa o zero do ESC), ao
+		// contrario do trim, que e' por ramo.
+		const int off = pulse_offset_us;
 		const double pulse_f =
 			static_cast<double>(MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs) +
 			norm * static_cast<double>(
 				MaxonDriverConfig::kPulseUsForwardMax - MaxonDriverConfig::kPulseUsForwardMin -
 				kMargemPartidaUs) +
-			static_cast<double>(trim);
+			static_cast<double>(trim) + static_cast<double>(off);
 		const int lo = clamp_int(
-			MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs + trim,
+			MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs + trim + off,
 			MaxonDriverConfig::kPulseUsForwardMin + kMargemMinimaUs,
 			MaxonDriverConfig::kPulseUsForwardMax);
 		const int pulse_us = static_cast<int>(std::lround(pulse_f));
@@ -758,14 +763,15 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(
 
 	// Re: o pulso DESCE com a velocidade, entao "mais rapido" = subtrair o trim.
 	const int trim = static_cast<int>(std::lround(driver_config_.pulse_trim_reverse_us));
+	const int off = pulse_offset_us;
 	const double pulse_f =
 		static_cast<double>(MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs) -
 		norm * static_cast<double>(
 			MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs -
 			MaxonDriverConfig::kPulseUsReverseMax) -
-		static_cast<double>(trim);
+		static_cast<double>(trim) + static_cast<double>(off);
 	const int hi = clamp_int(
-		MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs - trim,
+		MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs - trim + off,
 		MaxonDriverConfig::kPulseUsReverseMax,
 		MaxonDriverConfig::kPulseUsReverseMin - kMargemMinimaUs);
 	const int pulse_us = static_cast<int>(std::lround(pulse_f));

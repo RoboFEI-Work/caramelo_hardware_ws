@@ -181,6 +181,22 @@ namespace mobile_base_hardware {
                     cfg.enc_b_gpio = kEncBBackRight;
                 }
 
+                // Offset de pulso POR RODA, vindo do <param> da propria <joint>.
+                // Compensa o zero de cada ESC (tolerancia do oscilador da placa).
+                {
+                    const auto it = joint.parameters.find("pulse_offset_us");
+                    if (it != joint.parameters.end()) {
+                        try {
+                            cfg.pulse_offset_us = std::stod(it->second);
+                        } catch (const std::exception &) {
+                            RCLCPP_WARN(
+                                get_logger(),
+                                "pulse_offset_us invalido ('%s') na junta '%s'; usando 0.",
+                                it->second.c_str(), joint.name.c_str());
+                        }
+                    }
+                }
+
                 if (cfg.pwm_gpio < 0 || cfg.enc_a_gpio < 0 || cfg.enc_b_gpio < 0) {
                     RCLCPP_ERROR(get_logger(), "Pinos invalidos para a junta '%s'.", joint.name.c_str());
                     return hardware_interface::CallbackReturn::ERROR;

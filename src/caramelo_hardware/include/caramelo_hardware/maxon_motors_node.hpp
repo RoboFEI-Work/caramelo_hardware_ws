@@ -34,6 +34,25 @@ struct MaxonMotorConfig
 	double command_sign = 1.0;
 	// Sinal do FEEDBACK em espaco de junta.
 	double feedback_sign = 1.0;
+	// Deslocamento de pulso POR PLACA (us), somado nos DOIS ramos.
+	//
+	// NAO confundir com pulse_trim_*_us: o trim e' POR RAMO e assimetrico
+	// (frente soma, re subtrai), para corrigir uma diferenca entre andar para
+	// frente e para tras. Este offset e' SIMETRICO e existe para compensar o
+	// zero de cada ESC: o oscilador de cada placa tem tolerancia de ~+-1.5%
+	// (ate ~+-22 us em 1500 us), entao o pulso que a placa MEDE nao e' o que a
+	// Pi ENVIA. Sintoma: a roda anda mais devagar num sentido e mais rapido no
+	// outro, com erro de mesma magnitude e sinais opostos.
+	//
+	// Como calibrar: comande a mesma velocidade para frente e para tras e meca.
+	// erro_us = (|w_re| - |w_frente|) / 2 * 24.39   (us por rad/s de roda)
+	// Um valor POSITIVO significa que a placa le menos do que enviamos.
+	//
+	// PENDENTE: medido ~12 us no lado direito em 2026-09-01, mas a bateria do
+	// robo morreu logo depois do teste — o dado esta contaminado por queda de
+	// tensao sob carga e NAO foi aplicado. Recalibrar com bateria carregada
+	// antes de sair do zero.
+	double pulse_offset_us = 0.0;
 	// Sinal do ENCODER: converte o sentido decodificado (A/B fisicos) para o
 	// sentido positivo da roda. MEDIDO na bancada 2026-09-01 girando cada roda
 	// a mao no sentido de marcha a frente: FL +1, FR -1, BL +1, BR -1.
@@ -230,7 +249,8 @@ private:
 	// force = envia mesmo sem mudanca (init/stop/failsafe). Retorna false se o
 	// lgTxServo falhar (logado com throttle; erro NUNCA e' silencioso).
 	bool send_servo_pulse(std::size_t motor_index, int pulse_us, bool force);
-	int velocity_to_pulse_width_us(double wheel_velocity_rad_s, bool currently_moving) const;
+	int velocity_to_pulse_width_us(
+		double wheel_velocity_rad_s, bool currently_moving, int pulse_offset_us) const;
 	int neutral_pulse_width_us() const;
 	// Offset do pulso de cada roda dentro do periodo de 20 ms: 0/5/10/15 ms.
 	// Com offset=0 nas 4, a thread de tx do lgpio agendava as 4 bordas para o
