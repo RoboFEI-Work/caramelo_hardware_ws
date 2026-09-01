@@ -11,3 +11,10 @@ log/
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Claude Code local overrides
+.claude/settings.local.json

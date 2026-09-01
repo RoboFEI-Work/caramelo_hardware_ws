@@ -561,32 +561,49 @@ int MaxonMotorsNode::velocity_to_pulse_width_us(
 	// clamp e virava +307rpm de referencia no piso (comandado 650, rodava 957).
 	// Mudar a margem/ancora la = mudar aqui.
 	constexpr int kMargemPartidaUs = 30;
+	// Piso da margem: com trim NEGATIVO a ancora nao pode escorregar de volta
+	// para dentro da banda morta (ancora < 1540/>1460 = ESC nao parte).
+	constexpr int kMargemMinimaUs = 10;
 
 	// Trim por ramo (ver .hpp): positivo = ramo mais rapido. Desloca o mapa E
-	// o piso de margem juntos — no piso de operacao o pulso fica cravado no
+	// a ancora do clamp juntos — no piso de operacao o pulso fica cravado no
 	// clamp inferior, entao trim so' no valor computado seria engolido.
+	// 2026-09-01: esta funcao foi reconstruida apos o merge 101ad74, que
+	// concatenou os dois lados do conflito e deixou o pacote SEM COMPILAR
+	// (pulse_us redeclarado, lo/hi inexistentes). As duas intencoes sao
+	// ORTOGONAIS e ambas valem: a ancora em piso+margem vem de 1ca3e21 (dev) e
+	// o trim por ramo vem de 16df821 (rasp_5). ATENCAO: o trim de 8us foi
+	// calibrado contra a ancora ANTIGA (1540, 26.09us por rad/s); com a ancora
+	// nova (1570, 24.39us por rad/s) a inclinacao mudou -6.5% e o VALOR
+	// NUMERICO precisa ser reconfirmado no teste reto de 3,4m.
 	if (wheel_velocity_rad_s > 0.0) {
 		const int trim = static_cast<int>(std::lround(driver_config_.pulse_trim_forward_us));
 		const double pulse_f =
 			static_cast<double>(MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs) +
 			norm * static_cast<double>(
 				MaxonDriverConfig::kPulseUsForwardMax - MaxonDriverConfig::kPulseUsForwardMin -
-				kMargemPartidaUs);
-		const int pulse_us = static_cast<int>(std::lround(pulse_f));
-		return clamp_int(
-			pulse_us,
-			MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs,
+				kMargemPartidaUs) +
+			static_cast<double>(trim);
+		const int lo = clamp_int(
+			MaxonDriverConfig::kPulseUsForwardMin + kMargemPartidaUs + trim,
+			MaxonDriverConfig::kPulseUsForwardMin + kMargemMinimaUs,
 			MaxonDriverConfig::kPulseUsForwardMax);
 		const int pulse_us = static_cast<int>(std::lround(pulse_f));
 		return clamp_int(pulse_us, lo, MaxonDriverConfig::kPulseUsForwardMax);
 	}
 
+	// Re: o pulso DESCE com a velocidade, entao "mais rapido" = subtrair o trim.
 	const int trim = static_cast<int>(std::lround(driver_config_.pulse_trim_reverse_us));
 	const double pulse_f =
 		static_cast<double>(MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs) -
 		norm * static_cast<double>(
 			MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs -
-			MaxonDriverConfig::kPulseUsReverseMax);
+			MaxonDriverConfig::kPulseUsReverseMax) -
+		static_cast<double>(trim);
+	const int hi = clamp_int(
+		MaxonDriverConfig::kPulseUsReverseMin - kMargemPartidaUs - trim,
+		MaxonDriverConfig::kPulseUsReverseMax,
+		MaxonDriverConfig::kPulseUsReverseMin - kMargemMinimaUs);
 	const int pulse_us = static_cast<int>(std::lround(pulse_f));
 	return clamp_int(pulse_us, MaxonDriverConfig::kPulseUsReverseMax, hi);
 }
