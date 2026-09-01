@@ -83,6 +83,25 @@ public:
 	/// Leitura crua dos niveis de GPIO0..27. Caminho critico do decodificador.
 	inline uint32_t read_in() const { return *rio_in_; }
 
+	/// Le N amostras em rajada, sem consumir nenhuma no meio do caminho.
+	///
+	/// POR QUE ISTO EXISTE (medido na Pi 5 em 2026-09-01): ler e RAMIFICAR em
+	/// cada amostra da 1.04 MHz, porque a comparacao seguinte depende do dado e
+	/// o core fica parado esperando a transacao PCIe voltar (~960 ns de
+	/// latencia efetiva). Emitindo as leituras em rajada, varias ficam em voo ao
+	/// mesmo tempo e a taxa sobe para ~6 MHz. O processamento da rajada e' ALU
+	/// pura e custa uma fracao disso.
+	///
+	/// As leituras sao volatile: o compilador nao pode fundir nem reordenar, e
+	/// cada posicao do buffer e' uma amostra distinta em ordem temporal.
+	template<std::size_t N>
+	inline void read_burst(uint32_t (& out)[N]) const
+	{
+		for (std::size_t i = 0; i < N; ++i) {
+			out[i] = *rio_in_;
+		}
+	}
+
 	/// Configura um pino como entrada ligada ao RIO, com pull-up e Schmitt.
 	///
 	/// Sem isso a linha pode ficar em outra funcao (ou com o input desabilitado)

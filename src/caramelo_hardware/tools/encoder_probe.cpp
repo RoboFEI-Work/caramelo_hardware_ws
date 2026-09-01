@@ -174,20 +174,25 @@ int mode_edges(caramelo::Rp1Rio & rio, double secs)
 	const uint64_t tend = t0 + static_cast<uint64_t>(secs * 1e9);
 	uint64_t samples = 0;
 
+	constexpr std::size_t kBurst = 16;
+	uint32_t buf[kBurst];
 	while (!g_stop.load(std::memory_order_relaxed)) {
-		for (int i = 0; i < 256; ++i) {
-			const uint32_t cur = rio.read_in() & mask;
-			if (cur != prev) {
-				uint32_t diff = cur ^ prev;
-				while (diff) {
-					const int b = __builtin_ctz(diff);
-					++edges[b];
-					diff &= diff - 1;
+		for (int rep = 0; rep < 16; ++rep) {
+			rio.read_burst(buf);
+			for (std::size_t i = 0; i < kBurst; ++i) {
+				const uint32_t cur = buf[i] & mask;
+				if (cur != prev) {
+					uint32_t diff = cur ^ prev;
+					while (diff) {
+						const int b = __builtin_ctz(diff);
+						++edges[b];
+						diff &= diff - 1;
+					}
+					prev = cur;
 				}
-				prev = cur;
 			}
 		}
-		samples += 256;
+		samples += 16 * kBurst;
 		if (now_ns() >= tend) { break; }
 	}
 	const double dur = static_cast<double>(now_ns() - t0) / 1e9;
@@ -226,9 +231,14 @@ int mode_count(caramelo::Rp1Rio & rio, double secs, double counts_per_rev)
 		secs, counts_per_rev);
 	std::printf("gire as rodas a mao — Ctrl-C encerra antes do prazo\n\n");
 
+	constexpr std::size_t kBurst = 16;
+	uint32_t buf[kBurst];
 	while (!g_stop.load(std::memory_order_relaxed)) {
-		for (int i = 0; i < 256; ++i) { dec.update(rio.read_in()); }
-		samples += 256;
+		for (int rep = 0; rep < 16; ++rep) {
+			rio.read_burst(buf);
+			for (std::size_t i = 0; i < kBurst; ++i) { dec.update(buf[i]); }
+		}
+		samples += 16 * kBurst;
 		const uint64_t t = now_ns();
 		const uint64_t gap = t - tprev;
 		tprev = t;
@@ -249,7 +259,7 @@ int mode_count(caramelo::Rp1Rio & rio, double secs, double counts_per_rev)
 
 	const double dur = static_cast<double>(now_ns() - t0) / 1e9;
 	std::printf("\n=== resultado ===\n");
-	std::printf("janela=%.2f s  amostras=%" PRIu64 "  taxa=%.2f MHz  pior gap(lote de 256)=%" PRIu64 " ns\n",
+	std::printf("janela=%.2f s  amostras=%" PRIu64 "  taxa=%.2f MHz  pior gap(bloco de 256)=%" PRIu64 " ns\n",
 		dur, samples, (static_cast<double>(samples) / dur) / 1e6, worst_gap);
 	std::printf("%-4s %14s %12s %14s\n", "roda", "counts(x4)", "voltas", "ilegais");
 	for (std::size_t i = 0; i < kWheels; ++i) {
