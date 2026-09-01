@@ -71,24 +71,41 @@
         <joint name="front_left_wheel_joint"> <!--* Roda dianteira esquerda -->
             <!-- Especificar as interfaces de comando e estado para a junta direita -->
             <command_interface name="velocity" />   <!-- Interface de comando para velocidade (O que o controle espera de entrada)-->
+            <!-- OFFSET DE PULSO DESTA PLACA (us). Compensa o zero do ESC: o
+                 oscilador de cada B-G431B-ESC1 tem tolerancia propria, entao o
+                 pulso que a placa MEDE nao e' o que a Pi ENVIA.
+                 Medido em 2026-09-01 com bateria carregada, varredura em 3, 6 e
+                 10 rad/s nos dois sentidos, com o mesmo ponto no inicio e no fim
+                 como controle (bateu em 0,17%: sem sag durante o teste).
+                 O erro medido e' CONSTANTE com a velocidade e tem o MESMO sinal
+                 nos dois ramos -> offset de pulso, nao erro de ganho.
+                 Sem isto, as rodas da direita rodavam 6% mais devagar que as da
+                 esquerda para frente, o que no chao vira guinada. -->
+            <param name="pulse_offset_us">+2.1</param>
             <state_interface name="position" />     <!-- Interface de estado para posição (O que o hardware reporta como saída)-->
             <state_interface name="velocity" />
         </joint>
 
         <joint name="front_right_wheel_joint"> <!--* Roda dianteira direita -->
             <command_interface name="velocity" />
+            <!-- Offset desta placa: erro medido -11.05 us. Ver a nota completa na front_left. -->
+            <param name="pulse_offset_us">+11.0</param>
             <state_interface name="position" />
             <state_interface name="velocity" />
         </joint>
 
         <joint name="back_left_wheel_joint"> <!--* Roda traseira esquerda -->
             <command_interface name="velocity" />
+            <!-- Offset desta placa: erro medido -2.01 us. Ver a nota completa na front_left. -->
+            <param name="pulse_offset_us">+2.0</param>
             <state_interface name="position" />
             <state_interface name="velocity" />
         </joint>
 
         <joint name="back_right_wheel_joint"> <!--* Roda traseira direita -->
             <command_interface name="velocity" />
+            <!-- Offset desta placa: erro medido -11.36 us. Ver a nota completa na front_left. -->
+            <param name="pulse_offset_us">+11.4</param>
             <state_interface name="position" />
             <state_interface name="velocity" />
         </joint>
