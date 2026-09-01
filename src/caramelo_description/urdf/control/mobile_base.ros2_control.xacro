@@ -32,6 +32,28 @@
                      Recalibrar com o mesmo teste se trocar ESC/firmware. -->
                 <param name="pulse_trim_forward_us">8.0</param>
                 <param name="pulse_trim_reverse_us">0.0</param>
+                <!-- ENCODER (2026-09-01): quadratura x4 por amostragem do RIO do
+                     RP1. 1024 ciclos por canal por volta de motor x gearbox 1:28
+                     x 4 = 114688 counts por volta de RODA. Confirmado na bancada
+                     girando cada roda 3 voltas a mao (112.7k a 113.1k medidos; o
+                     deficit de ~2% e' candidato a erro de marcacao OU a razao de
+                     reducao fracionaria, e sera' resolvido na calibracao de
+                     odometria com trena, onde entra no wheels_radius). -->
+                <param name="encoder_counts_per_wheel_rev">114688.0</param>
+                <!-- Amostras de permanencia para aceitar um estado (filtro de
+                     glitch). A/B medido: com 1, o ruido das fases do motor no
+                     chicote do proprio encoder produziu 232 e 194 transicoes
+                     ilegais em FL e BR; com 8, ZERO nas quatro, sem perder
+                     contagem. 8 amostras = ~1.5 us a 5.4 MHz, contra 2.73 us de
+                     intervalo minimo entre transicoes na velocidade maxima. -->
+                <param name="encoder_stable_samples">8</param>
+                <!-- Core da thread de amostragem. So' com a thread PRESA num core
+                     ela sobe para SCHED_FIFO; sem isso roda em prioridade normal
+                     de proposito, porque uma thread de tempo real em laco fechado
+                     sem core proprio TRAVA a maquina (aconteceu em 2026-09-01: os
+                     spawners nunca alcancaram o controller_manager, load 14).
+                     Este core deve estar isolado por isolcpus no cmdline.txt. -->
+                <param name="sampler_cpu">3</param>
             </xacro:unless>
         </hardware>
 
