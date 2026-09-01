@@ -461,43 +461,68 @@ bool MaxonMotorsNode::read_encoder_snapshot(EncoderSnapshot & out) const
 void MaxonMotorsNode::sampler_loop()
 {
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	// POLITICA DE ESCALONAMENTO — aprendida na marra em 2026-09-01.
+	//
+	// Esta thread gira em laco fechado consumindo um core inteiro. Com
+	// SCHED_FIFO 80 e SEM afinidade, ela pode ser colocada em qualquer core e
+	// preempta tudo que estiver la; combinada com kernel.sched_rt_runtime_us=-1
+	// (que precisamos para nao levar 50 ms de blackout por segundo), o resultado
+	// foi a maquina ficar inutilizavel: os spawners do ros2_control nunca
+	// conseguiram falar com o controller_manager e o load subiu para 14.
+	//
+	// Regra: prioridade de tempo real SO com a thread PRESA num core. Sem
+	// afinidade, roda em prioridade normal — o que custa pouco, porque a taxa
+	// medida foi a mesma (5.43 MHz) com e sem RT; o RT compra latencia de pior
+	// caso, nao vazao. O ideal e' esse core estar isolado (isolcpus).
+	bool preso_em_um_core = false;
 	if (driver_config_.sampler_cpu >= 0) {
 		cpu_set_t set;
 		CPU_ZERO(&set);
 		CPU_SET(driver_config_.sampler_cpu, &set);
-		if (pthread_setaffinity_np(pthread_self(), sizeof(set), &set) != 0) {
+		if (pthread_setaffinity_np(pthread_self(), sizeof(set), &set) == 0) {
+			preso_em_um_core = true;
+		} else {
 			RCLCPP_WARN(
 				get_logger(), "Afinidade da thread de amostragem no core %d falhou.",
 				driver_config_.sampler_cpu);
 		}
 	}
-	// Prioridade ACIMA do laco de controle (que sobe com chrt -f 50 no launch):
-	// perder amostra de encoder e' pior do que atrasar um ciclo de PWM.
-	sched_param sp{};
-	sp.sched_priority = 80;
-	if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
+
+	if (!preso_em_um_core) {
 		RCLCPP_WARN(
 			get_logger(),
-			"SCHED_FIFO 80 na thread de amostragem falhou; seguindo sem prioridade RT "
-			"(confira /etc/security/limits.d/99-realtime.conf).");
+			"Thread de amostragem SEM afinidade: rodando em prioridade normal de "
+			"proposito. Uma thread SCHED_FIFO em laco fechado sem core proprio "
+			"trava a maquina. Defina <param name=\"sampler_cpu\"> (com isolcpus "
+			"nesse core) para habilitar tempo real.");
 	} else {
-		// Com kernel.sched_rt_runtime_us no padrao (950000/1000000), uma thread
-		// FIFO que usa 100% da CPU leva um BLACKOUT de 50 ms A CADA SEGUNDO —
-		// medido nesta Pi: pior intervalo 49.99 ms com o throttling ligado, 16 us
-		// com ele desligado. Isso vira perda de contagem em rajada, e o sintoma
-		// aparece como "encoder ruim".
-		FILE * f = std::fopen("/proc/sys/kernel/sched_rt_runtime_us", "r");
-		if (f != nullptr) {
-			long v = 0;
-			if (std::fscanf(f, "%ld", &v) == 1 && v > 0) {
-				RCLCPP_WARN(
-					get_logger(),
-					"kernel.sched_rt_runtime_us=%ld: a thread de amostragem vai levar "
-					"~%.0f ms/s de blackout. Configure kernel.sched_rt_runtime_us=-1 "
-					"(ver tools/setup_pi.sh).",
-					v, (1000000.0 - static_cast<double>(v)) / 1000.0);
+		// Prioridade ACIMA do laco de controle (que sobe com chrt -f 50 no
+		// launch): perder amostra de encoder e' pior que atrasar um ciclo de PWM.
+		sched_param sp{};
+		sp.sched_priority = 80;
+		if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
+			RCLCPP_WARN(
+				get_logger(),
+				"SCHED_FIFO 80 na thread de amostragem falhou; seguindo em prioridade "
+				"normal (confira /etc/security/limits.d/99-realtime.conf).");
+		} else {
+			// Com kernel.sched_rt_runtime_us no padrao (950000/1000000), uma
+			// thread FIFO que usa 100% da CPU leva um BLACKOUT de 50 ms A CADA
+			// SEGUNDO — medido: pior intervalo 49.99 ms com throttling, 16 us sem.
+			// Isso vira perda de contagem em rajada, diagnosticada como "encoder
+			// ruim". O contador de transicoes ilegais denuncia quando acontece.
+			FILE * f = std::fopen("/proc/sys/kernel/sched_rt_runtime_us", "r");
+			if (f != nullptr) {
+				long v = 0;
+				if (std::fscanf(f, "%ld", &v) == 1 && v > 0) {
+					RCLCPP_WARN(
+						get_logger(),
+						"kernel.sched_rt_runtime_us=%ld: a thread de amostragem vai levar "
+						"~%.0f ms/s de blackout. Ver tools/setup_pi.sh.",
+						v, (1000000.0 - static_cast<double>(v)) / 1000.0);
+				}
+				std::fclose(f);
 			}
-			std::fclose(f);
 		}
 	}
 
