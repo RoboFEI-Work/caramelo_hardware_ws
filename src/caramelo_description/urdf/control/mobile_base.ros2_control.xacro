@@ -81,7 +81,7 @@
                  nos dois ramos -> offset de pulso, nao erro de ganho.
                  Sem isto, as rodas da direita rodavam 6% mais devagar que as da
                  esquerda para frente, o que no chao vira guinada. -->
-            <param name="pulse_offset_us">+2.1</param>
+            <param name="pulse_offset_us">0.0</param>
             <state_interface name="position" />     <!-- Interface de estado para posição (O que o hardware reporta como saída)-->
             <state_interface name="velocity" />
         </joint>
@@ -89,7 +89,7 @@
         <joint name="front_right_wheel_joint"> <!--* Roda dianteira direita -->
             <command_interface name="velocity" />
             <!-- Offset desta placa: erro medido -11.05 us. Ver a nota completa na front_left. -->
-            <param name="pulse_offset_us">+11.0</param>
+            <param name="pulse_offset_us">0.0</param>
             <state_interface name="position" />
             <state_interface name="velocity" />
         </joint>
@@ -97,7 +97,7 @@
         <joint name="back_left_wheel_joint"> <!--* Roda traseira esquerda -->
             <command_interface name="velocity" />
             <!-- Offset desta placa: erro medido -2.01 us. Ver a nota completa na front_left. -->
-            <param name="pulse_offset_us">+2.0</param>
+            <param name="pulse_offset_us">0.0</param>
             <state_interface name="position" />
             <state_interface name="velocity" />
         </joint>
@@ -105,7 +105,7 @@
         <joint name="back_right_wheel_joint"> <!--* Roda traseira direita -->
             <command_interface name="velocity" />
             <!-- Offset desta placa: erro medido -11.36 us. Ver a nota completa na front_left. -->
-            <param name="pulse_offset_us">+11.4</param>
+            <param name="pulse_offset_us">0.0</param>
             <state_interface name="position" />
             <state_interface name="velocity" />
         </joint>
