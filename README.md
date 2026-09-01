@@ -83,7 +83,9 @@ source install/setup.bash
 
 - Rodas mecanum de **100 mm** de diametro; distancia entre rodas 471 mm (X) e
   300 mm (Y).
-- Encoder: 114688 contagens por volta de roda (validado girando a roda na mao).
+- Encoder: 114688 contagens por volta de roda em quadratura x4 (1024 ciclos por
+  canal x reducao 28 x 4). Na Pi 5 a leitura e' por AMOSTRAGEM do RIO do RP1, com
+  o sentido MEDIDO dos dois canais — ver `docs/encoder_amostragem_rp1.md`.
 - Os ESCs controlam a velocidade em malha fechada, mas **nao giram mais devagar
   que ~3,7 rad/s de roda** (limite do firmware) — o robo nao anda mais devagar
   que ~0,19 m/s.

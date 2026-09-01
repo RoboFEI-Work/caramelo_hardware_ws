@@ -35,11 +35,22 @@ ros2 topic echo /joint_states
 
 - A posição de `front_left_wheel_joint` deve variar **2π ≈ 6,283 rad (± 0,05)**.
 - Se variar ~π/2 (≈ 1,57), a constante de contagens por volta está 4× errada →
-  corrigir `encoder_counts_per_wheel_rev` em
-  `src/caramelo_hardware/src/mobile_base_hw_interface.cpp` (linha ~58,
-  hoje `1024.0 * 28.0 * 4.0`), **não** mexer no YAML.
+  corrigir `encoder_counts_per_wheel_rev` no **URDF**
+  (`caramelo_description/urdf/control/mobile_base.ros2_control.xacro`), hoje
+  `114688.0` = 1024 ciclos por canal × redução 28 × quadratura x4. Desde
+  2026-09-01 esse valor é parâmetro e não exige recompilar C++.
 - Girar bem devagar (< 0,03 rad/s): a velocidade em `/joint_states` deve ser ≠ 0
   (confirma que o deadband de leitura foi removido).
+- **O sinal também é testável agora.** Na Pi 5 o sentido é MEDIDO (quadratura x4
+  por amostragem), não deduzido do último comando: girando a roda no sentido de
+  marcha à frente, a posição da junta tem que **crescer** — nas quatro. Medido em
+  2026-09-01 com o robô sem comando nenhum: FL +6,127, FR +6,236, BL +6,154,
+  BR +6,093 rad para ~1 volta à mão.
+- Nota sobre a magnitude: em 8 medições independentes (4 rodas × 2 sessões) a
+  contagem deu sistematicamente **2 a 3% abaixo** do esperado, nunca acima. Ou é
+  parada antes da marca de forma consistente, ou a redução nominal "28:1" é
+  fracionária de verdade. A Etapa 1 absorve esse erro no `wheels_radius`; se
+  quiser separar as duas causas, meça 10 voltas em vez de 1.
 
 Repetir para as 4 rodas. Só prosseguir quando as 4 estiverem corretas.
 
