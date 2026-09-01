@@ -18,7 +18,9 @@
 //   encoder_probe --edges 10
 //   encoder_probe --count 30 --rt --cpu 3
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <atomic>
 #include <cinttypes>
 #include <cmath>
@@ -86,7 +88,7 @@ bool ros2_control_is_running()
 	struct dirent * e;
 	while (!found && (e = readdir(d)) != nullptr) {
 		if (e->d_name[0] < '0' || e->d_name[0] > '9') { continue; }
-		char path[256];
+		char path[300];
 		std::snprintf(path, sizeof(path), "/proc/%s/cmdline", e->d_name);
 		FILE * f = std::fopen(path, "rb");
 		if (f == nullptr) { continue; }

@@ -5,6 +5,15 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# O colcon nao define CMAKE_BUILD_TYPE, e sem ele o gcc compila com -O0.
+# Isto NAO e' cosmetico neste pacote: medido na Pi 5 em 2026-09-01, o laco de
+# amostragem do RIO faz 6.4 MHz com -O2 e 1.0 MHz com -O0 — fator 6. O mesmo
+# vale para o laco de controle de 100 Hz sob SCHED_FIFO.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
+  message(STATUS "caramelo_hardware: CMAKE_BUILD_TYPE nao definido -> RelWithDebInfo.")
+endif()
+
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
