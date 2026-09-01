@@ -454,13 +454,14 @@ void usage()
 
 int main(int argc, char ** argv)
 {
-	enum class Mode { None, Info, Edges, Count, Nudge } mode = Mode::None;
+	enum class Mode { None, Info, Edges, Count } mode = Mode::None;
 	double secs = 10.0;
 	double cpr = kCountsPerWheelRevX4;
 	bool rt = false;
 	bool hold_neutral = false;
 	int cpu = -1;
 	int chip = -1;
+	bool do_nudge = false;
 	int nudge_us = 1590;
 	double nudge_s = 0.4;
 
@@ -474,12 +475,12 @@ int main(int argc, char ** argv)
 		else if (a == "--chip" && i + 1 < argc) { chip = std::atoi(argv[++i]); }
 		else if (a == "--rt") { rt = true; }
 		else if (a == "--hold-neutral") { hold_neutral = true; }
-		else if (a == "--nudge") { mode = Mode::Nudge; hold_neutral = true; }
+		else if (a == "--nudge") { do_nudge = true; hold_neutral = true; }
 		else if (a == "--nudge-us" && i + 1 < argc) { nudge_us = std::atoi(argv[++i]); }
 		else if (a == "--nudge-s" && i + 1 < argc) { nudge_s = std::atof(argv[++i]); }
 		else { usage(); return 2; }
 	}
-	if (mode == Mode::None) { usage(); return 2; }
+	if (mode == Mode::None && !do_nudge) { usage(); return 2; }
 
 	if (ros2_control_is_running()) {
 		std::fprintf(stderr,
@@ -518,14 +519,16 @@ int main(int argc, char ** argv)
 
 	if (rt) { apply_realtime(cpu); }
 
-	int rc = 2;
+	int rc = 0;
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	// A cutucada vem ANTES do modo escolhido: ela destrava os eixos, entao um
+	// --count logo em seguida ja encontra as rodas livres para girar a mao.
+	if (do_nudge) { rc = mode_nudge(rio, nudge_us, nudge_s); }
+#endif
 	switch (mode) {
 		case Mode::Info: rc = mode_info(rio); break;
 		case Mode::Edges: rc = mode_edges(rio, secs); break;
 		case Mode::Count: rc = mode_count(rio, secs, cpr); break;
-#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
-		case Mode::Nudge: rc = mode_nudge(rio, nudge_us, nudge_s); break;
-#endif
 		default: break;
 	}
 
