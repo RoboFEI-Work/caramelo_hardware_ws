@@ -1,6 +1,7 @@
 #include "caramelo_hardware/mobile_base_hw_interface.hpp"
 
 #include <array>
+#include <cmath>
 #include <string>
 #include <utility>
 
@@ -138,6 +139,18 @@ namespace mobile_base_hardware {
                 "encoder_counts_per_wheel_rev", driver_config_.encoder_counts_per_wheel_rev);
             read_int_param("encoder_stable_samples", driver_config_.encoder_stable_samples);
             read_int_param("sampler_cpu", driver_config_.sampler_cpu);
+            // Gate de seguranca do failsafe. true = pode CORTAR os pulsos quando o
+            // laco de controle morre; so' vale com o firmware novo dos ESCs, em que
+            // Ton=0 PARA o motor. Com o firmware antigo, perda de PWM e' lida como
+            // RE MAXIMA, e o estado seguro passa a ser neutro sustentado.
+            {
+                const auto it = info_.hardware_parameters.find("esc_failsafe_cut_pulses");
+                if (it != info_.hardware_parameters.end()) {
+                    const std::string v = it->second;
+                    driver_config_.esc_failsafe_cut_pulses =
+                        (v == "true" || v == "True" || v == "1");
+                }
+            }
 
             joint_names_.clear();
             motor_configs_.clear();
@@ -247,6 +260,18 @@ namespace mobile_base_hardware {
             set_command("front_right_wheel_joint/velocity", 0.0);
             set_command("back_left_wheel_joint/velocity", 0.0);
             set_command("back_right_wheel_joint/velocity", 0.0);
+
+            // Mapa junta -> motor em voz alta: ele e' derivado da ordem do URDF e
+            // manda comando para uma roda especifica. Um erro aqui move a roda
+            // errada sem nenhuma mensagem de erro.
+            for (std::size_t i = 0; i < iface_velocity_.size(); ++i) {
+                RCLCPP_INFO(
+                    get_logger(), "motor %zu -> %s (PWM GPIO %d, enc A%d/B%d)",
+                    i, iface_velocity_[i].c_str(),
+                    (i < motor_configs_.size()) ? motor_configs_[i].pwm_gpio : -1,
+                    (i < motor_configs_.size()) ? motor_configs_[i].enc_a_gpio : -1,
+                    (i < motor_configs_.size()) ? motor_configs_[i].enc_b_gpio : -1);
+            }
 
             // Guarda de null: o on_deactivate destruia o driver, entao um ciclo
             // inactive -> active derrubava o ros2_control_node inteiro aqui.
@@ -370,7 +395,18 @@ namespace mobile_base_hardware {
             }
 
             for (std::size_t i = 0; i < iface_velocity_.size(); ++i) {
-                driver_->set_command_velocity(i, get_command(iface_velocity_[i]));
+                const double cmd = get_command(iface_velocity_[i]);
+                // NaN aqui nao e' teorico: o ros2_control inicializa os comandos
+                // como NaN ate o controlador ativar, e o driver trata isso como
+                // neutro. Mas NaN DEPOIS de ativo significa interface errada, e o
+                // sintoma e' o robo simplesmente nao andar, sem erro nenhum.
+                if (!std::isfinite(cmd)) {
+                    RCLCPP_WARN_THROTTLE(
+                        get_logger(), *get_clock(), 2000,
+                        "Comando nao-finito na interface '%s' (motor %zu).",
+                        iface_velocity_[i].c_str(), i);
+                }
+                driver_->set_command_velocity(i, cmd);
             }
 
             return hardware_interface::return_type::OK;

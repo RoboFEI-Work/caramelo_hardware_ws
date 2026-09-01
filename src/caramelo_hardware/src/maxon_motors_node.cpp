@@ -84,10 +84,10 @@ bool MaxonMotorsNode::initialize(
 	// a deteccao.
 	int chip_number = driver_config_.gpiochip_device;
 	if (chip_number >= 0) {
-		chip_handle_ = lgGpiochipOpen(chip_number);
+		chip_handle_.store(lgGpiochipOpen(chip_number));
 	} else {
-		chip_handle_ = -1;
-		for (int c = 0; c < 16 && chip_handle_ < 0; ++c) {
+		chip_handle_.store(-1);
+		for (int c = 0; c < 16 && chip_handle_.load() < 0; ++c) {
 			const int h = lgGpiochipOpen(c);
 			if (h < 0) {
 				continue;
@@ -96,20 +96,20 @@ bool MaxonMotorsNode::initialize(
 			if (lgGpioGetChipInfo(h, &info) == LG_OKAY &&
 				std::strstr(info.label, "rp1") != nullptr)
 			{
-				chip_handle_ = h;
+				chip_handle_.store(h);
 				chip_number = c;
 			} else {
 				lgGpiochipClose(h);
 			}
 		}
-		if (chip_handle_ < 0) {
+		if (chip_handle_.load() < 0) {
 			// Pi 4 e anteriores: header no pinctrl-bcm*. Aceitamos, mas SO se o
 			// label confirmar — cair no gpiochip0 as cegas e' perigoso na Pi 5,
 			// onde ele e' o gpio-brcmstb interno do BCM2712 e as linhas 24/25
 			// sao BT_RTS/BT_CTS. Um fallback errado nao "deixa de funcionar":
 			// ele dirige pinos internos da placa achando que fala com os ESCs.
 			// (Aconteceu na bancada de 2026-09-01 com um script de teste.)
-			for (int c = 0; c < 16 && chip_handle_ < 0; ++c) {
+			for (int c = 0; c < 16 && chip_handle_.load() < 0; ++c) {
 				const int h = lgGpiochipOpen(c);
 				if (h < 0) {
 					continue;
@@ -118,14 +118,14 @@ bool MaxonMotorsNode::initialize(
 				if (lgGpioGetChipInfo(h, &info) == LG_OKAY &&
 					std::strstr(info.label, "pinctrl-bcm") != nullptr)
 				{
-					chip_handle_ = h;
+					chip_handle_.store(h);
 					chip_number = c;
 				} else {
 					lgGpiochipClose(h);
 				}
 			}
 		}
-		if (chip_handle_ < 0) {
+		if (chip_handle_.load() < 0) {
 			RCLCPP_ERROR(
 				get_logger(),
 				"Nenhum gpiochip com label de header (pinctrl-rp1 ou pinctrl-bcm*) "
@@ -134,12 +134,12 @@ bool MaxonMotorsNode::initialize(
 			return false;
 		}
 	}
-	if (chip_handle_ < 0) {
+	if (chip_handle_.load() < 0) {
 		RCLCPP_ERROR(
 			get_logger(),
 			"lgGpiochipOpen falhou com codigo %d (chip %d). Confira permissao de "
 			"/dev/gpiochip* (grupo gpio) e o parametro gpiochip_device.",
-			chip_handle_,
+			chip_handle_.load(),
 			chip_number);
 		return false;
 	}
@@ -170,7 +170,7 @@ bool MaxonMotorsNode::initialize(
 			motor.config.feedback_sign = -1.0;
 		}
 
-		if (lgGpioClaimOutput(chip_handle_, 0, motor.config.pwm_gpio, 0) < 0) {
+		if (lgGpioClaimOutput(chip_handle_.load(), 0, motor.config.pwm_gpio, 0) < 0) {
 			RCLCPP_ERROR(
 				get_logger(),
 				"lgGpioClaimOutput falhou para PWM GPIO %d.",
@@ -213,7 +213,7 @@ bool MaxonMotorsNode::initialize(
 
 	last_update_time_ = now();
 	last_cycle_ns_.store(steady_now_ns());
-	initialized_ = true;
+	initialized_.store(true, std::memory_order_release);
 
 	sampler_running_.store(true);
 	sampler_thread_ = std::thread(&MaxonMotorsNode::sampler_loop, this);
@@ -261,32 +261,36 @@ void MaxonMotorsNode::shutdown_hardware()
 		sampler_thread_.join();
 	}
 
-	if (chip_handle_ >= 0) {
+	if (chip_handle_.load() >= 0) {
 		// Shutdown ORDENADO (2026-07-27): neutro -> 120 ms no fio (>=5 pulsos,
 		// o firmware ve o neutro de verdade) -> corta os pulsos (largura 0; o
 		// firmware detecta a perda e PARA os motores) -> libera linhas.
 		// A versao anterior cortava imediatamente apos o neutro: o neutro NUNCA
 		// chegava ao fio.
-		stop_all_motors();
+		// Threads ja joinadas acima, entao ninguem mais concorre: usa a versao
+		// sem lock para nao depender de reentrancia.
+		stop_all_motors_locked();
 		std::this_thread::sleep_for(std::chrono::milliseconds(120));
 		for (std::size_t i = 0; i < motors_.size(); ++i) {
-			lgTxServo(
-				chip_handle_, motors_[i].config.pwm_gpio, 0,
-				kServoFrequencyHz, servo_offset_us(i), 0);
-			lgGpioFree(chip_handle_, motors_[i].config.pwm_gpio);
+			if (driver_config_.esc_failsafe_cut_pulses) {
+				lgTxServo(
+					chip_handle_.load(), motors_[i].config.pwm_gpio, 0,
+					kServoFrequencyHz, servo_offset_us(i), 0);
+			}
+			lgGpioFree(chip_handle_.load(), motors_[i].config.pwm_gpio);
 		}
-		lgGpiochipClose(chip_handle_);
-		chip_handle_ = -1;
+		lgGpiochipClose(chip_handle_.load());
+		chip_handle_.store(-1);
 	}
 	motors_.clear();
 	have_last_snap_ = false;
 #endif
-	initialized_ = false;
+	initialized_.store(false, std::memory_order_release);
 }
 
 bool MaxonMotorsNode::is_initialized() const
 {
-	return initialized_;
+	return initialized_.load(std::memory_order_acquire);
 }
 
 void MaxonMotorsNode::set_command_velocity(std::size_t motor_index, double wheel_velocity_rad_s)
@@ -321,7 +325,7 @@ bool MaxonMotorsNode::get_feedback(
 bool MaxonMotorsNode::send_servo_pulse(std::size_t motor_index, int pulse_us, bool force)
 {
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
-	if (chip_handle_ < 0 || motor_index >= motors_.size()) {
+	if (chip_handle_.load() < 0 || motor_index >= motors_.size()) {
 		return false;
 	}
 	auto & motor = motors_[motor_index];
@@ -329,11 +333,11 @@ bool MaxonMotorsNode::send_servo_pulse(std::size_t motor_index, int pulse_us, bo
 	// reinicia o trem de pulsos, e re-armar a 100 Hz um trem de 50 Hz caia
 	// DENTRO do pulso alto e truncava Ton (pulso truncado cai na banda de RE
 	// do firmware, que arma re' sem ARMING_TIME — "roda inverte sozinha").
-	if (!force && motor.last_pulse_us == pulse_us) {
+	if (!force && motor.last_pulse_us.load(std::memory_order_relaxed) == pulse_us) {
 		return true;
 	}
 	const int rc = lgTxServo(
-		chip_handle_, motor.config.pwm_gpio, pulse_us,
+		chip_handle_.load(), motor.config.pwm_gpio, pulse_us,
 		kServoFrequencyHz, servo_offset_us(motor_index), 0);
 	if (rc < 0) {
 		// NUNCA falhar em silencio: pulso congelado sem log era o mecanismo do
@@ -345,7 +349,7 @@ bool MaxonMotorsNode::send_servo_pulse(std::size_t motor_index, int pulse_us, bo
 			rc, motor.config.pwm_gpio, pulse_us);
 		return false;
 	}
-	motor.last_pulse_us = pulse_us;
+	motor.last_pulse_us.store(pulse_us, std::memory_order_relaxed);
 	return true;
 #else
 	(void)motor_index;
@@ -357,8 +361,18 @@ bool MaxonMotorsNode::send_servo_pulse(std::size_t motor_index, int pulse_us, bo
 
 void MaxonMotorsNode::stop_all_motors()
 {
+	// Ate 2026-09-01 esta funcao era chamada do on_activate e do on_deactivate
+	// (thread do controller_manager) SEM segurar o mutex, colidindo com o
+	// update_cycle que escreve nos mesmos motores. O custo do lock aqui e' no
+	// maximo um ciclo de controle (10 ms), fora do caminho de 100 Hz.
+	std::lock_guard<std::mutex> lock(hw_mutex_);
+	stop_all_motors_locked();
+}
+
+void MaxonMotorsNode::stop_all_motors_locked()
+{
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
-	if (chip_handle_ < 0) {
+	if (chip_handle_.load() < 0) {
 		return;
 	}
 
@@ -406,7 +420,7 @@ void MaxonMotorsNode::failsafe_loop()
 	bool pulses_cut = false;
 	while (failsafe_thread_running_.load()) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
-		if (!initialized_ || chip_handle_ < 0) {
+		if (!initialized_.load(std::memory_order_acquire) || chip_handle_.load() < 0) {
 			continue;
 		}
 		const int64_t stale_ns = steady_now_ns() - last_cycle_ns_.load();
@@ -415,33 +429,48 @@ void MaxonMotorsNode::failsafe_loop()
 			continue;
 		}
 		if (stale_ns < 1000LL * 1000 * 1000) {
-			// Loop de controle engasgado: forca NEUTRO direto (bypass do mutex).
-			RCLCPP_ERROR_THROTTLE(
-				get_logger(), *get_clock(), 1000,
-				"FAILSAFE: control_loop parado ha %.0f ms — forcando neutro.",
-				stale_ns / 1e6);
+			// GPIO PRIMEIRO, log DEPOIS. O RCLCPP_*_THROTTLE chama get_clock(),
+			// que toma mutex interno do rclcpp e pode alocar: fazer isso antes do
+			// GPIO seria inversao de prioridade exatamente na thread que existe
+			// para sobreviver a um sistema travado.
 			for (std::size_t i = 0; i < motors_.size(); ++i) {
 				lgTxServo(
-					chip_handle_, motors_[i].config.pwm_gpio,
+					chip_handle_.load(), motors_[i].config.pwm_gpio,
 					neutral_pulse_width_us(), kServoFrequencyHz,
 					servo_offset_us(i), 0);
-				motors_[i].last_pulse_us = neutral_pulse_width_us();
+				motors_[i].last_pulse_us.store(neutral_pulse_width_us(), std::memory_order_relaxed);
 			}
+			RCLCPP_ERROR_THROTTLE(
+				get_logger(), *get_clock(), 1000,
+				"FAILSAFE: control_loop parado ha %.0f ms — neutro forcado.",
+				stale_ns / 1e6);
 		} else if (!pulses_cut) {
 			// Travado de verdade: corta os pulsos — o firmware dos ESCs detecta
 			// a perda de sinal e PARA os motores (~500 ms).
+			health_.store(static_cast<int>(Health::Morto), std::memory_order_relaxed);
+			for (std::size_t i = 0; i < motors_.size(); ++i) {
+				// GATE DE SEGURANCA: cortar os pulsos so' e' o estado seguro com o
+				// firmware novo dos ESCs, em que Ton=0 PARA o motor. No firmware
+				// antigo, perda de PWM e' lida como RE MAXIMA — nesse caso o estado
+				// seguro e' segurar neutro para sempre, nunca cortar.
+				if (driver_config_.esc_failsafe_cut_pulses) {
+					lgTxServo(
+						chip_handle_.load(), motors_[i].config.pwm_gpio, 0,
+						kServoFrequencyHz, servo_offset_us(i), 0);
+				} else {
+					lgTxServo(
+						chip_handle_.load(), motors_[i].config.pwm_gpio,
+						neutral_pulse_width_us(), kServoFrequencyHz, servo_offset_us(i), 0);
+				}
+				motors_[i].last_pulse_us.store(-1, std::memory_order_relaxed);
+			}
 			RCLCPP_FATAL(
 				get_logger(),
-				"FAILSAFE: control_loop parado ha %.1f s — cortando os pulsos "
-				"(firmware dos ESCs para os motores).",
-				stale_ns / 1e9);
-			for (std::size_t i = 0; i < motors_.size(); ++i) {
-				health_.store(static_cast<int>(Health::Morto), std::memory_order_relaxed);
-				lgTxServo(
-					chip_handle_, motors_[i].config.pwm_gpio, 0,
-					kServoFrequencyHz, servo_offset_us(i), 0);
-				motors_[i].last_pulse_us = -1;
-			}
+				"FAILSAFE: control_loop parado ha %.1f s — %s.",
+				stale_ns / 1e9,
+				driver_config_.esc_failsafe_cut_pulses
+					? "pulsos CORTADOS (firmware dos ESCs para os motores)"
+					: "neutro sustentado (corte desabilitado por esc_failsafe_cut_pulses)");
 			pulses_cut = true;
 		}
 	}
@@ -581,9 +610,9 @@ void MaxonMotorsNode::update_cycle()
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
 	bool publicar_diagnostico = false;
 	{
-	std::lock_guard<std::mutex> lock(update_cycle_mutex_);
+	std::lock_guard<std::mutex> lock(hw_mutex_);
 
-	if (!initialized_ || chip_handle_ < 0) {
+	if (!initialized_.load(std::memory_order_acquire) || chip_handle_.load() < 0) {
 		return;
 	}
 
@@ -630,8 +659,8 @@ void MaxonMotorsNode::update_cycle()
 		const double cmd_signed = command_stale
 			? 0.0
 			: motor.command_rad_s.load() * motor.config.command_sign;
-		const int pulse_us = velocity_to_pulse_width_us(cmd_signed, motor.moving);
-		motor.moving = (pulse_us != neutral_pulse_width_us());
+		const int pulse_us = velocity_to_pulse_width_us(cmd_signed, motor.moving.load(std::memory_order_relaxed));
+		motor.moving.store(pulse_us != neutral_pulse_width_us(), std::memory_order_relaxed);
 		send_servo_pulse(i, pulse_us, false);
 	}
 

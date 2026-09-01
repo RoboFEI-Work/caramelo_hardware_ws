@@ -54,6 +54,15 @@
                      spawners nunca alcancaram o controller_manager, load 14).
                      Este core deve estar isolado por isolcpus no cmdline.txt. -->
                 <param name="sampler_cpu">3</param>
+                <!-- FAILSAFE: pode CORTAR os pulsos quando o laco de controle
+                     morre? true SO vale com o firmware novo dos ESCs, em que
+                     Ton=0 PARA o motor (confirmado pelo operador em 2026-09-01).
+                     Com o firmware ANTIGO, perda de PWM e' interpretada como RE
+                     EM VELOCIDADE MAXIMA, e o estado seguro passa a ser neutro
+                     sustentado — por isso isto e' parametro e nao constante:
+                     uma Pi com ESC antigo nao pode herdar o comportamento novo
+                     em silencio. -->
+                <param name="esc_failsafe_cut_pulses">true</param>
             </xacro:unless>
         </hardware>
 

@@ -90,6 +90,12 @@ struct MaxonDriverConfig
 	// Watchdog: sem set_command_velocity() por mais que isso -> PWM neutro
 	// (protege contra morte do write()/controller_manager com PWM congelado).
 	double command_timeout_s = 0.5;
+	// Se o failsafe pode CORTAR os pulsos (largura 0) ou apenas segurar neutro.
+	// Com o firmware novo dos ESCs, Ton=0 PARA o motor e cortar e' o estado mais
+	// seguro. Com o firmware antigo, perda de PWM e' interpretada como RE
+	// MAXIMA — por isso isto e' um parametro e nao uma constante: uma Pi com ESC
+	// antigo nao pode herdar o comportamento novo em silencio.
+	bool esc_failsafe_cut_pulses = true;
 };
 
 class MaxonMotorsNode : public rclcpp::Node
@@ -110,6 +116,7 @@ public:
 	bool get_feedback(std::size_t motor_index, double & position_rad, double & velocity_rad_s) const;
 
 	void stop_all_motors();
+
 
 	/// Instantaneo coerente dos contadores do encoder, com o relogio MONOTONICO
 	/// da amostra. Publicado pela thread de amostragem por seqlock.
@@ -156,8 +163,8 @@ private:
 			position_rad(other.position_rad.load()),
 			velocity_rad_s(other.velocity_rad_s.load()),
 			command_rad_s(other.command_rad_s.load()),
-			last_pulse_us(other.last_pulse_us),
-			moving(other.moving)
+			last_pulse_us(other.last_pulse_us.load()),
+			moving(other.moving.load())
 		{
 		}
 
@@ -168,8 +175,8 @@ private:
 				position_rad.store(other.position_rad.load());
 				velocity_rad_s.store(other.velocity_rad_s.load());
 				command_rad_s.store(other.command_rad_s.load());
-				last_pulse_us = other.last_pulse_us;
-				moving = other.moving;
+				last_pulse_us.store(other.last_pulse_us.load());
+				moving.store(other.moving.load());
 			}
 			return *this;
 		}
@@ -179,8 +186,8 @@ private:
 			position_rad(other.position_rad.load()),
 			velocity_rad_s(other.velocity_rad_s.load()),
 			command_rad_s(other.command_rad_s.load()),
-			last_pulse_us(other.last_pulse_us),
-			moving(other.moving)
+			last_pulse_us(other.last_pulse_us.load()),
+			moving(other.moving.load())
 		{
 		}
 
@@ -191,8 +198,8 @@ private:
 				position_rad.store(other.position_rad.load());
 				velocity_rad_s.store(other.velocity_rad_s.load());
 				command_rad_s.store(other.command_rad_s.load());
-				last_pulse_us = other.last_pulse_us;
-				moving = other.moving;
+				last_pulse_us.store(other.last_pulse_us.load());
+				moving.store(other.moving.load());
 			}
 			return *this;
 		}
@@ -204,14 +211,17 @@ private:
 		// Ultimo pulso efetivamente programado (us); -1 = nenhum. Usado para so'
 		// reprogramar o lgTxServo quando o valor MUDA (reprogramar a 100 Hz um
 		// trem de 50 Hz truncava pulsos — auditoria do port, bug #2).
-		int last_pulse_us = -1;
+		std::atomic<int> last_pulse_us{-1};
 		// Histerese do piso: ligar exige |cmd| >= floor; desligar so' abaixo de
 		// 0.4*floor (mata o chattering 0 <-> piso a 100 Hz).
-		bool moving = false;
+		std::atomic<bool> moving{false};
 	};
 
 	void control_loop();
 	void failsafe_loop();
+	/// Versao que assume o mutex JA tomado (usada pelo shutdown, que ja joinou
+	/// as threads).
+	void stop_all_motors_locked();
 	/// Laco de amostragem do RIO: le em rajada, alimenta a quadratura e publica
 	/// o instantaneo por seqlock. Roda em SCHED_FIFO alto, idealmente num core
 	/// isolado. Nao faz syscall, nao aloca, nao pega lock.
@@ -254,8 +264,10 @@ private:
 	int diag_divisor_ = 0;
 
 	double rad_per_count_ = 0.0;
-	int chip_handle_ = -1;
-	bool initialized_ = false;
+	// Lidos pela thread de failsafe (que de proposito NAO pega o mutex) e pela
+	// thread de amostragem, enquanto a thread do controller_manager escreve.
+	std::atomic<int> chip_handle_{-1};
+	std::atomic<bool> initialized_{false};
 	rclcpp::Time last_update_time_;
 
 	rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr velocity_pub_;
@@ -276,7 +288,11 @@ private:
 	std::thread failsafe_thread_;
 	std::atomic<bool> failsafe_thread_running_{false};
 	std::atomic<int64_t> last_cycle_ns_{0};
-	mutable std::mutex update_cycle_mutex_;
+	// Protege TUDO que fala com o lgpio ou escreve last_pulse_us/moving.
+	// EXCECAO deliberada: a thread de failsafe nao pega este mutex — e' para
+	// isso que ela existe. Por isso todo campo que ela toca e' atomico ou
+	// imutavel apos a inicializacao.
+	mutable std::mutex hw_mutex_;
 
 	// Instante (steady clock, ns) do ultimo comando recebido via
 	// set_command_velocity(); usado pelo watchdog de comando no update_cycle().
