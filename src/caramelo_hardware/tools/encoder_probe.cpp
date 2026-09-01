@@ -38,6 +38,10 @@
 #include "caramelo_hardware/quadrature_decoder.hpp"
 #include "caramelo_hardware/rp1_rio.hpp"
 
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+#include <lgpio.h>
+#endif
+
 namespace
 {
 
@@ -68,8 +72,98 @@ constexpr WheelPins kPins[kWheels] = {
 // fracionaria. O teste mede o PRODUTO, que e' a constante que o software usa.
 constexpr double kCountsPerWheelRevX4 = 1024.0 * 28.0 * 4.0;
 
+// Linhas de PWM dos 4 ESCs. So' sao tocadas no modo --hold-neutral.
+constexpr WheelPins kPwm[kWheels] = {
+	{"FL", 17, 17},
+	{"FR", 23, 23},
+	{"BL", 24, 24},
+	{"BR", 25, 25},
+};
+
+constexpr int kNeutroUs = 1500;
+constexpr int kServoHz = 50;
+
 std::atomic<bool> g_stop{false};
 void on_signal(int) { g_stop.store(true); }
+
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+int g_chip = -1;
+
+/// Abre o gpiochip do RP1 conferindo o LABEL, e diz em voz alta qual escolheu.
+///
+/// Isto e' um modo de falha real e caro: nesta Pi o RP1 e' o gpiochip4, e o
+/// gpiochip0 e' o gpio-brcmstb interno do BCM2712, onde as linhas 24/25 sao
+/// BT_RTS/BT_CTS. Um fallback silencioso para o chip 0 nao "nao funciona": ele
+/// dirige pinos internos da placa achando que esta falando com os ESCs.
+int abrir_chip_rp1(int forcado)
+{
+	if (forcado >= 0) {
+		const int h = lgGpiochipOpen(forcado);
+		if (h < 0) { std::fprintf(stderr, "lgGpiochipOpen(%d) falhou\n", forcado); return -1; }
+		std::printf("gpiochip%d aberto (forcado por --chip)\n", forcado);
+		return h;
+	}
+	for (int c = 0; c < 16; ++c) {
+		const int h = lgGpiochipOpen(c);
+		if (h < 0) { continue; }
+		lgChipInfo_t info;
+		if (lgGpioGetChipInfo(h, &info) == LG_OKAY && std::strstr(info.label, "rp1") != nullptr) {
+			std::printf("gpiochip%d selecionado (label \"%s\", %d linhas)\n",
+				c, info.label, info.lines);
+			return h;
+		}
+		lgGpiochipClose(h);
+	}
+	std::fprintf(stderr,
+		"NENHUM gpiochip com label contendo \"rp1\" foi encontrado.\n"
+		"RECUSANDO abrir o gpiochip0 as cegas: nesta placa ele e' o gpio-brcmstb\n"
+		"interno (linhas 24/25 = BT_RTS/BT_CTS), nao o header de 40 pinos.\n"
+		"Confira com: gpiodetect   e force com: --chip N\n");
+	return -1;
+}
+
+/// Segura pulso neutro nos 4 ESCs: estado seguro, e' o que silencia o alarme de
+/// "sem sinal" das placas. Offsets escalonados 0/5/10/15 ms como na producao,
+/// para as 4 bordas nao caírem no mesmo instante do periodo de 20 ms.
+bool iniciar_neutro(int chip_forcado)
+{
+	g_chip = abrir_chip_rp1(chip_forcado);
+	if (g_chip < 0) { return false; }
+	for (std::size_t i = 0; i < kWheels; ++i) {
+		const int pino = static_cast<int>(kPwm[i].a_gpio);
+		if (lgGpioClaimOutput(g_chip, 0, pino, 0) < 0) {
+			std::fprintf(stderr, "claim do PWM GPIO%d falhou (o bringup esta no ar?)\n", pino);
+			return false;
+		}
+		if (lgTxServo(g_chip, pino, kNeutroUs, kServoHz, static_cast<int>(i) * 5000, 0) < 0) {
+			std::fprintf(stderr, "lgTxServo GPIO%d falhou\n", pino);
+			return false;
+		}
+		std::printf("  %s PWM GPIO%-3d = %d us\n", kPwm[i].name, pino, kNeutroUs);
+	}
+	std::printf("neutro ativo nos 4 ESCs — o alarme deve parar\n");
+	return true;
+}
+
+/// Saida ordenada: reafirma neutro, deixa >=5 pulsos no fio e so' entao para.
+void encerrar_neutro()
+{
+	if (g_chip < 0) { return; }
+	for (std::size_t i = 0; i < kWheels; ++i) {
+		lgTxServo(g_chip, static_cast<int>(kPwm[i].a_gpio), kNeutroUs, kServoHz,
+			static_cast<int>(i) * 5000, 0);
+	}
+	usleep(120000);
+	for (std::size_t i = 0; i < kWheels; ++i) {
+		const int pino = static_cast<int>(kPwm[i].a_gpio);
+		lgTxServo(g_chip, pino, 0, kServoHz, 0, 0);
+		lgGpioFree(g_chip, pino);
+	}
+	lgGpiochipClose(g_chip);
+	g_chip = -1;
+	std::printf("neutro encerrado, linhas de PWM liberadas\n");
+}
+#endif  // CARAMELO_HAS_LGPIO
 
 uint64_t now_ns()
 {
@@ -275,13 +369,16 @@ int mode_count(caramelo::Rp1Rio & rio, double secs, double counts_per_rev)
 void usage()
 {
 	std::printf(
-		"uso: encoder_probe [--info | --edges SEG | --count SEG] [--rt] [--cpu N] [--cpr N]\n"
-		"  --info        estado de pad/funcao/nivel das 8 linhas de encoder\n"
-		"  --edges SEG   bordas cruas por linha (mede chilrear e ringing)\n"
-		"  --count SEG   contagem em quadratura x4 por roda\n"
-		"  --rt          SCHED_FIFO 80 + mlockall\n"
-		"  --cpu N       fixa a thread no core N\n"
-		"  --cpr N       counts por volta de roda em x4 (default %.0f)\n",
+		"uso: encoder_probe [--info | --edges SEG | --count SEG] [opcoes]\n"
+		"  --info           estado de pad/funcao/nivel das 8 linhas de encoder\n"
+		"  --edges SEG      bordas cruas por linha (mede chilrear e ringing)\n"
+		"  --count SEG      contagem em quadratura x4 por roda\n"
+		"  --hold-neutral   segura 1500 us nos 4 ESCs enquanto mede (silencia o\n"
+		"                   alarme das placas energizadas; estado seguro)\n"
+		"  --chip N         forca o gpiochip do PWM em vez de detectar pelo label\n"
+		"  --rt             SCHED_FIFO 80 + mlockall\n"
+		"  --cpu N          fixa a thread no core N\n"
+		"  --cpr N          counts por volta de roda em x4 (default %.0f)\n",
 		kCountsPerWheelRevX4);
 }
 
@@ -293,7 +390,9 @@ int main(int argc, char ** argv)
 	double secs = 10.0;
 	double cpr = kCountsPerWheelRevX4;
 	bool rt = false;
+	bool hold_neutral = false;
 	int cpu = -1;
+	int chip = -1;
 
 	for (int i = 1; i < argc; ++i) {
 		const std::string a = argv[i];
@@ -302,7 +401,9 @@ int main(int argc, char ** argv)
 		else if (a == "--count" && i + 1 < argc) { mode = Mode::Count; secs = std::atof(argv[++i]); }
 		else if (a == "--cpu" && i + 1 < argc) { cpu = std::atoi(argv[++i]); }
 		else if (a == "--cpr" && i + 1 < argc) { cpr = std::atof(argv[++i]); }
+		else if (a == "--chip" && i + 1 < argc) { chip = std::atoi(argv[++i]); }
 		else if (a == "--rt") { rt = true; }
+		else if (a == "--hold-neutral") { hold_neutral = true; }
 		else { usage(); return 2; }
 	}
 	if (mode == Mode::None) { usage(); return 2; }
@@ -330,12 +431,30 @@ int main(int argc, char ** argv)
 		rio.configure_input(w.b_gpio, true, true);
 	}
 
+	if (hold_neutral) {
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+		if (!iniciar_neutro(chip)) {
+			encerrar_neutro();
+			return 1;
+		}
+#else
+		std::fprintf(stderr, "--hold-neutral exige lgpio, e este binario foi compilado sem.\n");
+		return 1;
+#endif
+	}
+
 	if (rt) { apply_realtime(cpu); }
 
+	int rc = 2;
 	switch (mode) {
-		case Mode::Info: return mode_info(rio);
-		case Mode::Edges: return mode_edges(rio, secs);
-		case Mode::Count: return mode_count(rio, secs, cpr);
-		default: return 2;
+		case Mode::Info: rc = mode_info(rio); break;
+		case Mode::Edges: rc = mode_edges(rio, secs); break;
+		case Mode::Count: rc = mode_count(rio, secs, cpr); break;
+		default: break;
 	}
+
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	if (hold_neutral) { encerrar_neutro(); }
+#endif
+	return rc;
 }

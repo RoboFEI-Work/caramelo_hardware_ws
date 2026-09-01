@@ -78,6 +78,12 @@ endif()
 add_executable(encoder_probe tools/encoder_probe.cpp)
 target_include_directories(encoder_probe PRIVATE include)
 target_link_libraries(encoder_probe Threads::Threads)
+if(HAVE_LGPIO_H AND LGPIO_LIB)
+  # lgpio so' e' usado pelo modo --hold-neutral (PWM). A contagem de encoder e'
+  # MMIO puro e funciona sem ele.
+  target_compile_definitions(encoder_probe PRIVATE CARAMELO_HAS_LGPIO=1)
+  target_link_libraries(encoder_probe ${LGPIO_LIB})
+endif()
 
 pluginlib_export_plugin_description_file(hardware_interface caramelo_hw_interface.xml)
 
