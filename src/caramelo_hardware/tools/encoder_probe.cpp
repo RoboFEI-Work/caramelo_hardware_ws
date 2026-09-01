@@ -366,6 +366,74 @@ int mode_count(caramelo::Rp1Rio & rio, double secs, double counts_per_rev)
 	return 0;
 }
 
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+/// Cutuca cada roda por vez: pulso acima do piso por um instante, volta a
+/// neutro, e mede o que o encoder viu.
+///
+/// Serve a dois propositos de uma vez:
+///  1) destrava as rodas — o ESC armado em neutro segura o eixo, e um comando
+///     curto solta o motor para que o robo possa ser girado a mao;
+///  2) da o SINAL de cada roda sob um comando de sentido CONHECIDO, que e'
+///     exatamente a calibracao que nao pode ser deduzida do codigo (hoje o
+///     sinal e' decidido por numero de pino, o que quebra em silencio se
+///     alguem remapear).
+///
+/// Uma roda por vez, sempre. As outras tres sao observadas junto para flagrar
+/// diafonia entre canais (contagem numa roda que nao foi comandada).
+int mode_nudge(caramelo::Rp1Rio & rio, int pulse_us, double hold_s)
+{
+	std::array<caramelo::ChannelMap, kWheels> chans{};
+	for (std::size_t i = 0; i < kWheels; ++i) {
+		chans[i].a_bit = static_cast<uint8_t>(kPins[i].a_gpio);
+		chans[i].b_bit = static_cast<uint8_t>(kPins[i].b_gpio);
+		chans[i].sign = 1;
+	}
+	caramelo::QuadratureDecoder<kWheels> dec(chans);
+	dec.reset(rio.read_in());
+
+	constexpr std::size_t kBurst = 16;
+	uint32_t buf[kBurst];
+	auto amostrar_ate = [&](uint64_t t_fim) {
+		while (now_ns() < t_fim && !g_stop.load(std::memory_order_relaxed)) {
+			for (int rep = 0; rep < 16; ++rep) {
+				rio.read_burst(buf);
+				for (std::size_t i = 0; i < kBurst; ++i) { dec.update(buf[i]); }
+			}
+		}
+	};
+
+	std::printf("\ncutucando cada roda com %d us por %.2f s (piso do ESC ~1570 us)\n",
+		pulse_us, hold_s);
+	std::printf("RODAS SUSPENSAS. Uma de cada vez.\n\n");
+
+	for (std::size_t w = 0; w < kWheels && !g_stop.load(std::memory_order_relaxed); ++w) {
+		int64_t antes[kWheels];
+		for (std::size_t i = 0; i < kWheels; ++i) { antes[i] = dec.count(i); }
+
+		const int pino = static_cast<int>(kPwm[w].a_gpio);
+		lgTxServo(g_chip, pino, pulse_us, kServoHz, static_cast<int>(w) * 5000, 0);
+		amostrar_ate(now_ns() + static_cast<uint64_t>(hold_s * 1e9));
+		lgTxServo(g_chip, pino, kNeutroUs, kServoHz, static_cast<int>(w) * 5000, 0);
+		// Deixa a inercia acabar antes de fechar a conta (o firmware segura a
+		// referencia por ~0.5 s depois do comando).
+		amostrar_ate(now_ns() + 1200000000ull);
+
+		std::printf("%s (GPIO%d):", kPwm[w].name, pino);
+		for (std::size_t i = 0; i < kWheels; ++i) {
+			const int64_t d = dec.count(i) - antes[i];
+			std::printf("  %s=%+8" PRId64, kPins[i].name, d);
+		}
+		std::printf("\n");
+		std::fflush(stdout);
+	}
+
+	std::printf("\nleia assim: na linha da roda comandada, a coluna dela deve ser a UNICA\n"
+		"nao-nula. O SINAL diz o sentido que o encoder ve quando o ESC recebe um\n"
+		"pulso de FRENTE — e' o que calibra encoder_sign por roda.\n");
+	return 0;
+}
+#endif  // CARAMELO_HAS_LGPIO
+
 void usage()
 {
 	std::printf(
@@ -386,13 +454,15 @@ void usage()
 
 int main(int argc, char ** argv)
 {
-	enum class Mode { None, Info, Edges, Count } mode = Mode::None;
+	enum class Mode { None, Info, Edges, Count, Nudge } mode = Mode::None;
 	double secs = 10.0;
 	double cpr = kCountsPerWheelRevX4;
 	bool rt = false;
 	bool hold_neutral = false;
 	int cpu = -1;
 	int chip = -1;
+	int nudge_us = 1590;
+	double nudge_s = 0.4;
 
 	for (int i = 1; i < argc; ++i) {
 		const std::string a = argv[i];
@@ -404,6 +474,9 @@ int main(int argc, char ** argv)
 		else if (a == "--chip" && i + 1 < argc) { chip = std::atoi(argv[++i]); }
 		else if (a == "--rt") { rt = true; }
 		else if (a == "--hold-neutral") { hold_neutral = true; }
+		else if (a == "--nudge") { mode = Mode::Nudge; hold_neutral = true; }
+		else if (a == "--nudge-us" && i + 1 < argc) { nudge_us = std::atoi(argv[++i]); }
+		else if (a == "--nudge-s" && i + 1 < argc) { nudge_s = std::atof(argv[++i]); }
 		else { usage(); return 2; }
 	}
 	if (mode == Mode::None) { usage(); return 2; }
@@ -450,6 +523,9 @@ int main(int argc, char ** argv)
 		case Mode::Info: rc = mode_info(rio); break;
 		case Mode::Edges: rc = mode_edges(rio, secs); break;
 		case Mode::Count: rc = mode_count(rio, secs, cpr); break;
+#if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+		case Mode::Nudge: rc = mode_nudge(rio, nudge_us, nudge_s); break;
+#endif
 		default: break;
 	}
 
