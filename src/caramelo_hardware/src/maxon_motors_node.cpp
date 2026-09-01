@@ -50,8 +50,11 @@ int64_t steady_now_ns()
 MaxonMotorsNode::MaxonMotorsNode()
 : Node("maxon_motors_node")
 {
+	// Best-effort de propriedade 1: este topico e' TELEMETRIA, consumido por SSH
+	// e Wi-Fi. Com QoS reliable, um consumidor lento aplica contrapressao no
+	// publish() — que roda na thread de controle sob chrt -f 50.
 	velocity_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>(
-		"maxon/wheel_velocity", rclcpp::QoS(10));
+		"maxon/wheel_velocity", rclcpp::SensorDataQoS());
 }
 
 MaxonMotorsNode::~MaxonMotorsNode()
@@ -204,6 +207,10 @@ bool MaxonMotorsNode::initialize(
 		}
 	}
 
+	diag_msg_.data.assign(motors_.size(), 0.0);
+	diag_divisor_ = 0;
+	health_.store(static_cast<int>(Health::Ok), std::memory_order_relaxed);
+
 	last_update_time_ = now();
 	last_cycle_ns_.store(steady_now_ns());
 	initialized_ = true;
@@ -331,6 +338,7 @@ bool MaxonMotorsNode::send_servo_pulse(std::size_t motor_index, int pulse_us, bo
 	if (rc < 0) {
 		// NUNCA falhar em silencio: pulso congelado sem log era o mecanismo do
 		// "mandei parar e nao para" quando uma chamada falhava.
+		health_.store(static_cast<int>(Health::Degradado), std::memory_order_relaxed);
 		RCLCPP_ERROR_THROTTLE(
 			get_logger(), *get_clock(), 1000,
 			"lgTxServo falhou (rc=%d) no GPIO %d (pulso %d us).",
@@ -428,6 +436,7 @@ void MaxonMotorsNode::failsafe_loop()
 				"(firmware dos ESCs para os motores).",
 				stale_ns / 1e9);
 			for (std::size_t i = 0; i < motors_.size(); ++i) {
+				health_.store(static_cast<int>(Health::Morto), std::memory_order_relaxed);
 				lgTxServo(
 					chip_handle_, motors_[i].config.pwm_gpio, 0,
 					kServoFrequencyHz, servo_offset_us(i), 0);
@@ -570,6 +579,8 @@ void MaxonMotorsNode::sampler_loop()
 void MaxonMotorsNode::update_cycle()
 {
 #if defined(CARAMELO_HAS_LGPIO) && CARAMELO_HAS_LGPIO
+	bool publicar_diagnostico = false;
+	{
 	std::lock_guard<std::mutex> lock(update_cycle_mutex_);
 
 	if (!initialized_ || chip_handle_ < 0) {
@@ -577,8 +588,6 @@ void MaxonMotorsNode::update_cycle()
 	}
 
 	last_update_time_ = now();
-	std_msgs::msg::Float64MultiArray msg;
-	msg.data.resize(motors_.size(), 0.0);
 
 	// Feedback vem do INSTANTANEO da thread de amostragem, com o dt do relogio
 	// MONOTONICO da propria amostra.
@@ -616,7 +625,7 @@ void MaxonMotorsNode::update_cycle()
 				motor.velocity_rad_s.store(delta_rad / dt_enc);
 			}
 		}
-		msg.data[i] = motor.velocity_rad_s.load();
+		diag_msg_.data[i] = motor.velocity_rad_s.load();
 
 		const double cmd_signed = command_stale
 			? 0.0
@@ -631,8 +640,18 @@ void MaxonMotorsNode::update_cycle()
 		have_last_snap_ = true;
 	}
 
-	velocity_pub_->publish(msg);
 	last_cycle_ns_.store(now_ns, std::memory_order_relaxed);
+	publicar_diagnostico = (++diag_divisor_ % 5) == 0;
+	}  // solta o lock ANTES de publicar
+
+	// Publicacao decimada para 20 Hz e fora do lock. Antes: a 100 Hz, com a
+	// mensagem alocada por ciclo, DENTRO do mutex — sob SCHED_FIFO 50 o malloc
+	// e a contrapressao do DDS entravam no caminho critico. O proprio
+	// docs/calibracao_odometria.md ja dizia para usar media de varios segundos
+	// porque o topico e' ruidoso a 100 Hz: ninguem precisava daquela taxa.
+	if (publicar_diagnostico) {
+		velocity_pub_->publish(diag_msg_);
+	}
 #endif
 }
 

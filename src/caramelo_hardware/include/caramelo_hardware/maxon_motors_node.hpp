@@ -122,7 +122,29 @@ public:
 	};
 
 	/// Le o instantaneo sem lock (seqlock). Devolve false se nao houver dado.
+	///
+	/// O instantaneo e' uma VISAO imutavel: cada consumidor (o update_cycle do
+	/// driver e o read() do ros2_control) guarda o seu proprio "anterior" e
+	/// calcula o delta. E' isso que elimina o aliasing entre os dois lacos de
+	/// 100 Hz, em que um integrava a posicao e o outro a diferenciava de volta
+	/// num relogio diferente — alguns ciclos viam delta zero e outros viam dois,
+	/// e a velocidade exportada oscilava entre 0 e ~2x.
 	bool read_encoder_snapshot(EncoderSnapshot & out) const;
+
+	/// Radianos de roda por count do encoder (2*pi / counts_per_wheel_rev).
+	double rad_per_count() const { return rad_per_count_; }
+
+	/// Sinal de feedback em espaco de JUNTA para a roda i (+1/-1).
+	double feedback_sign(std::size_t i) const
+	{
+		return (i < motors_.size()) ? motors_[i].config.feedback_sign : 1.0;
+	}
+
+	/// Saude do driver, para o read()/write() nao mentirem OK com o hardware
+	/// morto. Ok = normal; Degradado = uma escrita de PWM falhou (logado com
+	/// throttle); Morto = o failsafe cortou os pulsos ou o chip sumiu.
+	enum class Health : int { Ok = 0, Degradado = 1, Morto = 2 };
+	Health health() const { return static_cast<Health>(health_.load(std::memory_order_relaxed)); }
 
 private:
 	struct MotorRuntime
@@ -224,6 +246,12 @@ private:
 	// Custa ~50 ns no read(), sem lock e sem bloquear a thread de amostragem.
 	mutable std::atomic<uint32_t> snap_seq_{0};
 	EncoderSnapshot snap_{};
+	std::atomic<int> health_{0};
+	// Mensagem de diagnostico pre-dimensionada: publicar a 100 Hz alocando um
+	// Float64MultiArray por ciclo era ~100 malloc/s dentro da thread que roda
+	// com chrt -f 50.
+	std_msgs::msg::Float64MultiArray diag_msg_;
+	int diag_divisor_ = 0;
 
 	double rad_per_count_ = 0.0;
 	int chip_handle_ = -1;

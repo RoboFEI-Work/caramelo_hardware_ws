@@ -27,6 +27,9 @@ namespace mobile_base_hardware {
             hardware_interface::CallbackReturn
                 on_deactivate(const rclcpp_lifecycle::State & previous_state) override;
 
+            hardware_interface::CallbackReturn
+                on_cleanup(const rclcpp_lifecycle::State & previous_state) override;
+
 
             // System Interface overrides
             hardware_interface::CallbackReturn
@@ -60,10 +63,23 @@ namespace mobile_base_hardware {
                 int back_left_motor_id_ = 2;
                 int back_right_motor_id_ = 3;
 
-                // Ultima posicao lida do encoder por roda (rad), indexada pelo motor_id.
-                // Usada para calcular a velocidade media no periodo do controller e para
-                // manter a posicao exportada continua (sem salto) apos on_activate.
-                std::array<double, 4> last_wheel_position_rad_{{0.0, 0.0, 0.0, 0.0}};
+                // Ultimo instantaneo de encoder consumido pelo read(). Cada consumidor
+                // guarda o seu proprio "anterior": e' isso que tira o aliasing entre o
+                // laco do driver e o do controller_manager.
+                MaxonMotorsNode::EncoderSnapshot last_snap_{};
+                bool have_last_snap_ = false;
+
+                // Nomes das interfaces montados UMA vez. Antes eram concatenados a cada
+                // read(): "front_left_wheel_joint/velocity" tem 31 caracteres, estoura o
+                // SSO da libstdc++ (15) e ia para o heap — ~1200 malloc/s dentro de uma
+                // thread que roda com chrt -f 50.
+                std::array<std::string, 4> iface_velocity_{};
+                std::array<std::string, 4> iface_position_{};
+
+                // O driver so' pode ser reportado como morto DEPOIS de ter ficado
+                // saudavel: sem isso um read() antes do on_activate mataria o
+                // componente na subida.
+                bool was_healthy_ = false;
 
     }; // class MobileBaseHWInterface
 

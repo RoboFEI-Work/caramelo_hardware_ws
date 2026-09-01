@@ -181,6 +181,15 @@ namespace mobile_base_hardware {
             back_left_motor_id_ = 2;
             back_right_motor_id_ = 3;
 
+            // Nomes de interface indexados pelo MOTOR, derivados da ordem real das
+            // juntas no URDF. Antes o read()/write() usavam uma tabela fixa
+            // (front_left=0, front_right=1, ...): reordenar as <joint> no xacro
+            // mandava comando para a roda errada SEM nenhum erro.
+            for (std::size_t i = 0; i < joint_names_.size() && i < iface_velocity_.size(); ++i) {
+                iface_velocity_[i] = joint_names_[i] + "/velocity";
+                iface_position_[i] = joint_names_[i] + "/position";
+            }
+
             //obrigatório retornar SUCCESS ou ERROR, para o ros2_control saber se a inicialização foi bem sucedida ou não.
             return hardware_interface::CallbackReturn::SUCCESS;
         }
@@ -224,14 +233,11 @@ namespace mobile_base_hardware {
             set_state("back_left_wheel_joint/position", 0.0);
             set_state("back_right_wheel_joint/position", 0.0);
 
-            // Semente das posicoes: captura a posicao atual acumulada do encoder para que
-            // o primeiro read() nao produza salto de posicao nem pico de velocidade.
-            for (std::size_t motor_id = 0; motor_id < last_wheel_position_rad_.size(); ++motor_id) {
-                double position_rad = 0.0;
-                double velocity_rad_s = 0.0;
-                if (driver_ && driver_->get_feedback(motor_id, position_rad, velocity_rad_s)) {
-                    last_wheel_position_rad_[motor_id] = position_rad;
-                }
+            // Semente do instantaneo: o primeiro read() apos ativar nao pode ver como
+            // "delta" tudo que o encoder contou enquanto o componente estava inativo.
+            have_last_snap_ = false;
+            if (driver_ && driver_->read_encoder_snapshot(last_snap_)) {
+                have_last_snap_ = true;
             }
 
             // Comandos comecam como NaN no ros2_control ate o controlador ativar;
@@ -242,11 +248,31 @@ namespace mobile_base_hardware {
             set_command("back_left_wheel_joint/velocity", 0.0);
             set_command("back_right_wheel_joint/velocity", 0.0);
 
-            driver_->stop_all_motors();
+            // Guarda de null: o on_deactivate destruia o driver, entao um ciclo
+            // inactive -> active derrubava o ros2_control_node inteiro aqui.
+            if (driver_) {
+                driver_->stop_all_motors();
+            }
             return hardware_interface::CallbackReturn::SUCCESS;
         }
 
     hardware_interface::CallbackReturn MobileBaseHWInterface::on_deactivate
+        (const rclcpp_lifecycle::State & previous_state)
+        {
+            (void)previous_state;
+
+            // on_deactivate PARA os motores mas NAO destroi o driver: a amostragem
+            // do encoder precisa continuar viva para que o robo arrastado a mao
+            // continue sendo contado. A liberacao do hardware e' do on_cleanup.
+            if (driver_) {
+                driver_->stop_all_motors();
+            }
+            have_last_snap_ = false;
+
+            return hardware_interface::CallbackReturn::SUCCESS;
+        }
+
+    hardware_interface::CallbackReturn MobileBaseHWInterface::on_cleanup
         (const rclcpp_lifecycle::State & previous_state)
         {
             (void)previous_state;
@@ -257,11 +283,12 @@ namespace mobile_base_hardware {
             }
 
             if (driver_) {
-                driver_->stop_all_motors();
                 driver_->shutdown_hardware();
                 node_executor_.remove_node(driver_);
                 driver_.reset();
             }
+            have_last_snap_ = false;
+            was_healthy_ = false;
 
             return hardware_interface::CallbackReturn::SUCCESS;
         }
@@ -270,54 +297,65 @@ namespace mobile_base_hardware {
         (const rclcpp::Time & time, const rclcpp::Duration & period)
         {
             (void)time;
+            (void)period;
 
             if (!driver_ || !driver_->is_initialized()) {
                 return hardware_interface::return_type::OK;
             }
 
-            // Pares (junta, motor_id) na MESMA ordem definida em on_init()
-            // (front_left=0, front_right=1, back_left=2, back_right=3).
-            static const std::array<std::pair<const char *, std::size_t>, 4> kWheels = {{
-                {"front_left_wheel_joint", 0},
-                {"front_right_wheel_joint", 1},
-                {"back_left_wheel_joint", 2},
-                {"back_right_wheel_joint", 3},
-            }};
-
-            const double dt = period.seconds();
-
-            for (const auto & [joint, motor_id] : kWheels) {
-                double position_rad = 0.0;
-                double velocity_rad_s = 0.0;
-                // Posicao REAL acumulada do encoder (calculada a ~100Hz no driver),
-                // em vez de reintegrar a velocidade no ciclo do controller_manager.
-                if (!driver_->get_feedback(motor_id, position_rad, velocity_rad_s)) {
-                    continue;
-                }
-
-                // Delta real do encoder desde o ultimo read().
-                const double delta_rad = position_rad - last_wheel_position_rad_[motor_id];
-                last_wheel_position_rad_[motor_id] = position_rad;
-
-                // Velocidade = media exata no periodo do controller, derivada da posicao
-                // acumulada do encoder. Mais suave que a velocidade diferenciada a 100Hz
-                // no driver e consistente com a posicao exportada: a odometria integrada
-                // pelo mecanum_drive_controller reproduz o deslocamento real das rodas.
-                // Fallback para a velocidade do driver se o periodo for degenerado.
-                const double velocity_state = (dt > 1e-6) ? (delta_rad / dt) : velocity_rad_s;
-
-                // IMPORTANTE: sem deadband no feedback. O controlador integra a velocidade
-                // das rodas para gerar a odometria; zerar velocidades pequenas acumula erro
-                // sistematico no /odom/wheel (deadband so faria sentido no comando, nunca
-                // na leitura do encoder).
-                const std::string joint_name(joint);
-                set_state(joint_name + "/velocity", velocity_state);
-
-                // Posicao continua: acumula o delta real do encoder (nao a integral da
-                // velocidade), entao a posicao exportada segue exatamente o encoder.
-                set_state(joint_name + "/position", get_state(joint_name + "/position") + delta_rad);
+            const auto saude = driver_->health();
+            if (saude == MaxonMotorsNode::Health::Ok) {
+                was_healthy_ = true;
+            } else if (saude == MaxonMotorsNode::Health::Morto && was_healthy_) {
+                // Ate 2026-09-01 o read() devolvia OK com o driver morto: o
+                // controller_manager nunca sabia, tudo aparecia verde em
+                // 'ros2 control list_controllers' e o robo ficava surdo. DEACTIVATE
+                // desativa o componente (e os controladores que usam as interfaces
+                // dele) sem passar por on_error.
+                RCLCPP_ERROR_THROTTLE(
+                    get_logger(), *get_clock(), 1000,
+                    "Driver dos motores em estado MORTO (failsafe cortou os pulsos). "
+                    "Desativando o componente.");
+                return hardware_interface::return_type::DEACTIVATE;
             }
 
+            // Feedback direto do instantaneo do encoder: delta de CONTAGENS desde a
+            // leitura anterior e dt do relogio MONOTONICO da propria amostra.
+            //
+            // O caminho antigo (posicao integrada a 100 Hz no driver, diferenciada de
+            // volta a 100 Hz aqui, em outro relogio) fazia alguns ciclos verem delta
+            // zero e outros verem dois — a velocidade exportada oscilava entre 0 e ~2x
+            // e o mecanum_drive_controller integrava esse ruido direto no /odom/wheel.
+            MaxonMotorsNode::EncoderSnapshot snap;
+            if (!driver_->read_encoder_snapshot(snap)) {
+                return hardware_interface::return_type::OK;
+            }
+            if (!have_last_snap_) {
+                last_snap_ = snap;
+                have_last_snap_ = true;
+                return hardware_interface::return_type::OK;
+            }
+
+            const double dt = (snap.t_mono_ns > last_snap_.t_mono_ns)
+                ? static_cast<double>(snap.t_mono_ns - last_snap_.t_mono_ns) * 1e-9
+                : 0.0;
+            const double rad_por_count = driver_->rad_per_count();
+
+            for (std::size_t i = 0; i < iface_velocity_.size(); ++i) {
+                const int64_t delta_counts = snap.counts[i] - last_snap_.counts[i];
+                const double delta_rad =
+                    static_cast<double>(delta_counts) * rad_por_count * driver_->feedback_sign(i);
+
+                // Sem deadband na leitura: o controlador integra a velocidade das rodas
+                // para a odometria, e zerar velocidades pequenas acumula erro
+                // sistematico no /odom/wheel. Deadband so' faz sentido no COMANDO.
+                if (dt > 1e-6) {
+                    set_state(iface_velocity_[i], delta_rad / dt);
+                }
+                set_state(iface_position_[i], get_state(iface_position_[i]) + delta_rad);
+            }
+
+            last_snap_ = snap;
             return hardware_interface::return_type::OK;
         }
 
@@ -331,17 +369,9 @@ namespace mobile_base_hardware {
                 return hardware_interface::return_type::OK;
             }
 
-            driver_->set_command_velocity(front_left_motor_id_, get_command("front_left_wheel_joint/velocity"));
-            driver_->set_command_velocity(front_right_motor_id_, get_command("front_right_wheel_joint/velocity"));
-            driver_->set_command_velocity(back_left_motor_id_, get_command("back_left_wheel_joint/velocity"));
-            driver_->set_command_velocity(back_right_motor_id_, get_command("back_right_wheel_joint/velocity"));
-            
-            // RCLCPP_INFO(get_logger(),
-            //             "front_left vel cmd: %lf, front_right vel cmd: %lf, back_left vel cmd: %lf, back_right vel cmd: %lf",
-            //             get_command("front_left_wheel_joint/velocity"),
-            //             get_command("front_right_wheel_joint/velocity"),
-            //             get_command("back_left_wheel_joint/velocity"),
-            //             get_command("back_right_wheel_joint/velocity"));
+            for (std::size_t i = 0; i < iface_velocity_.size(); ++i) {
+                driver_->set_command_velocity(i, get_command(iface_velocity_[i]));
+            }
 
             return hardware_interface::return_type::OK;
         }
