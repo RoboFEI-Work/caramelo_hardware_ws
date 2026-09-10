@@ -21,6 +21,7 @@ def generate_launch_description():
     use_imu = LaunchConfiguration('use_imu')
     use_manipulator = LaunchConfiguration('use_manipulator')
     use_mock_components = LaunchConfiguration('use_mock_components')
+    mesh_uri_prefix = LaunchConfiguration('mesh_uri_prefix')
     
     urdf_path = os.path.join(robot_description_path, 'urdf', 'robots', 'robot.urdf.xacro')
     mesh_server_port = '8000'
@@ -31,7 +32,7 @@ def generate_launch_description():
             ' use_realsense:=true',
             ' use_mock_components:=', use_mock_components,
             ' visual_mode:=http',
-            ' mesh_uri_prefix:=http://raspberrypi.local:', mesh_server_port,
+            ' mesh_uri_prefix:=', mesh_uri_prefix,
         ]),
         value_type=str,
     )
@@ -219,6 +220,16 @@ def generate_launch_description():
                         'controllers se true. Use false p/ testes so de base (braco '
                         'desenergizado/desconectado — sem /dev/manip_usb o configure '
                         'do Arm mata o controller_manager inteiro).',
+        ),
+        DeclareLaunchArgument(
+            'mesh_uri_prefix',
+            default_value='http://raspberrypi.local:' + mesh_server_port,
+            description='De onde os visualizadores (RViz) buscam as STL. O padrao '
+                        'serve da propria Pi por HTTP. Use '
+                        '"package://caramelo_description" para o RViz resolver as '
+                        'malhas na COPIA LOCAL do PC: zero trafego, zero dependencia '
+                        'do mesh_server — exige que o PC tenha o caramelo_hardware_ws '
+                        'compilado (ja e requisito do move_group).',
         ),
         DeclareLaunchArgument(
             'use_mock_components',

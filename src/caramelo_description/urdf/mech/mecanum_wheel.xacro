@@ -33,22 +33,24 @@
                 </visual>
             </xacro:if>
 
-            <xacro:if value="${visual_mode == 'primitive'}">
-                <collision>
-                    <origin xyz="0 0 0" rpy="${M_PI/2} 0 0"/>
-                    <geometry>
-                        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
-                    </geometry>
-                </collision>
-            </xacro:if>
-            <xacro:if value="${visual_mode != 'primitive'}">
-                <collision>
-                    <origin xyz="0 0 0" rpy="${M_PI/2 if x_reflect == y_reflect else -M_PI/2} 0 0"/>
-                    <geometry>
-                        <mesh filename="${wheel_mesh}" scale="${wheel_mesh_scale}"/> 
-                    </geometry>
-                </collision>
-            </xacro:if>
+            <!-- COLISAO SEMPRE CILINDRO, mesmo quando o visual usa a malha.
+                 A roda mecanum se comporta como um cilindro (os roletes cobrem
+                 a circunferencia) e a inercia logo abaixo JA e' a de um
+                 cilindro das mesmas medidas — a malha aqui nao acrescenta
+                 fidelidade nenhuma e custa caro: roda_escala_final.stl tem
+                 13,3 MB (46% de todo o STL do robo) e entra 4 vezes. Quem
+                 monta modelo de colisao a partir desta descricao pagava BVH de
+                 4x ~250k triangulos, e o RViz criava a entidade de colisao de
+                 cada roda mesmo com "Collision Enabled: false".
+                 Era assim no caramelo_description antigo ("cilindro simples
+                 para otimizacao de performance"); perdeu-se na recriacao do
+                 pacote em 01/07/2026. Restaurado em 10/09/2026. -->
+            <collision>
+                <origin xyz="0 0 0" rpy="${M_PI/2} 0 0"/>
+                <geometry>
+                    <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+                </geometry>
+            </collision>
 
             <xacro:cylinder_inertia m="${wheel_mass}" r="${wheel_radius}" l="${wheel_width}" o_xyz="0 0 0" o_rpy="${M_PI/2} 0 0"/>
 
