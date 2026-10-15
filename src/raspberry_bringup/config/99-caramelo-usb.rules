@@ -7,4 +7,4 @@
 
 SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ATTRS{serial}=="e4c7c3b7f189ec119c08c271d76262f7", GROUP="dialout", MODE:="0666", SYMLINK+="lidar_usb"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", GROUP="dialout", MODE:="0666", SYMLINK+="imu_usb"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", ATTRS{serial}=="BG01XAP9", GROUP="dialout", MODE:="0666", SYMLINK+="manip_usb"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6014", ATTRS{serial}=="FTBENRZI", GROUP="dialout", MODE:="0666", SYMLINK+="manip_usb"

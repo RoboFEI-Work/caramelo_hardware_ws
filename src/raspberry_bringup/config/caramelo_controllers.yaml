@@ -64,7 +64,7 @@ arm_controller:
   ros__parameters:
     # Dynamixel perde pacotes acima de ~30Hz; 25Hz = 100/4 (divisor exato do
     # controller_manager), alinhado com o rw_rate do hardware do braco.
-    update_rate: 25
+    update_rate: 100
     joints:
       - manip_joint1
       - manip_joint2
@@ -112,7 +112,7 @@ arm_controller:
 gripper_controller:
   ros__parameters:
     # Mesma limitacao do Dynamixel do braco (ver arm_controller).
-    update_rate: 25
+    update_rate: 100
     joints:
       - manip_joint6
       - manip_joint7
